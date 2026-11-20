@@ -1,0 +1,22 @@
+# Gradle / Android 构建产物
+.gradle/
+build/
+app/build/
+.kotlin/
+captures/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# 发布物不进仓库（走 GitHub Releases 附件）
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# 本地数据 / 日志（不要提交）
+userdata.json
+*.log
+keystore.properties

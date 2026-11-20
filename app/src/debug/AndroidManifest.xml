@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  开发（debug）构建的权限兜底。
+
+  背景：okhttp-android / lifecycle-process 等依赖库的 manifest 会声明 INTERNET 权限，
+  manifest merger 会把它们合并进 debug 包——**只看我们自己的 manifest 是发现不了的**。
+
+  所以这里用 tools:node="remove" 在 debug 变体里把这些权限**强制移除**：
+  debug 包在系统层面就没有联网能力，这是"开发期严禁联网"最硬的一道防线。
+
+  发布构建（src/release）不受影响，INTERNET 会在那时合并进来。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove" />
+</manifest>

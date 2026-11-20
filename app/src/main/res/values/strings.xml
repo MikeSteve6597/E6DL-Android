@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">E6DL</string>
+    <string name="app_tagline">e621 浏览与批量下载</string>
+    <string name="net_locked_title">开发版本：网络已锁死</string>
+    <string name="net_locked_body">开发构建不包含 INTERNET 权限，且网络层会在发请求前直接报错。这是防止开发期抓取真实内容的硬性限制，发布版不受影响。</string>
+    <string name="net_release_title">联网已启用</string>
+    <string name="net_release_body">这是发布构建，可以访问 e621 接口。</string>
+    <string name="mode_offline">单机模式</string>
+    <string name="mode_online">在线模式</string>
+</resources>
