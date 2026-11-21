@@ -23,6 +23,12 @@ run {
     }
 }
 
+// 仅用于本机模拟器验证：debug 构建默认只出 arm64-v8a（与发布物一致）。
+// 需要在 x86_64 模拟器上装 debug 包时，用：
+//   gradle :app:assembleDebug -Pe6dl.extraAbi=x86_64
+// release 构建脚本不传这个属性，因此发布物始终只含 arm64-v8a。
+val extraAbi: String = (project.findProperty("e6dl.extraAbi") as String?)?.trim().orEmpty()
+
 android {
     namespace = "com.mikesteve.e621downloadler"
     // compileSdk 37：2026.11 的 androidx 依赖强制要求（见 libs.versions.toml 注释）
@@ -35,12 +41,13 @@ android {
         minSdk = 24
         // 不上架商店，targetSdk 用 36；compileSdk 只影响可调用的 API。
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.0.1"
+        versionCode = 7
+        versionName = "1.3.0"
 
         // 只发 ARMv8（用户要求：只开发 arm64-v8a）
         ndk {
             abiFilters += listOf("arm64-v8a")
+            if (extraAbi.isNotEmpty()) abiFilters += extraAbi
         }
     }
 
@@ -110,6 +117,13 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    // 应用内视频播放（ExoPlayer + 控制条 UI）
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
 
     debugImplementation(libs.androidx.ui.tooling)
+
+    // JVM 单元测试（解析兼容性 / 配置编解码 / 搜索标签构建）
+    testImplementation(libs.junit)
+    testImplementation(libs.org.json)
 }

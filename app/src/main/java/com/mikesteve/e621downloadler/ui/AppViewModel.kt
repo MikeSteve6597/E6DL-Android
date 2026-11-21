@@ -1,23 +1,35 @@
 package com.mikesteve.e621downloadler.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import coil3.SingletonImageLoader
+import com.mikesteve.e621downloadler.BuildConfig
 import com.mikesteve.e621downloadler.data.Config
 import com.mikesteve.e621downloadler.data.ConfigStore
 import com.mikesteve.e621downloadler.data.Post
+import com.mikesteve.e621downloadler.data.Quality
 import com.mikesteve.e621downloadler.download.DownloadEngine
 import com.mikesteve.e621downloadler.download.DownloadProgress
 import com.mikesteve.e621downloadler.net.ApiClient
+import com.mikesteve.e621downloadler.net.friendlyMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
  * 全局状态容器（等价于桌面版 `MainWindow` 持有的 config / session / worker）。
+ *
+ * v1.1 起把「页面数据」也放进 ViewModel：
+ *  - 旋转屏幕 / 折叠屏展开收起 / 分屏拖动时，ViewModel 不重建，列表内容与选中状态得以保留；
+ *  - 列表详情（List-Detail）布局需要一个统一的"当前选中作品"状态，放在这里最自然。
  *
  * 刻意不用 Hilt：工程规模还小，一个 AndroidViewModel 就够，少一层依赖少一处坑。
  */
@@ -30,9 +42,387 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val config: StateFlow<Config> =
         store.config.stateIn(viewModelScope, SharingStarted.Eagerly, Config())
 
+    /**
+     * 已保存配置是否已经从 DataStore 读出来。
+     *
+     * [config] 的初始占位值是 [Config]（默认单机模式）。DataStore 首次发射之前如果就开始组合页面，
+     * 页面会拿着"默认单机"配置发起首次请求（上次存在线时也会被判成单机），并且之后配置变成在线
+     * 也不会自动重载——这正是「上次切到在线、重启后主页仍提示单机」的根因。
+     * 因此 UI 要等本标记为 true 后再组合任何页面（见 `E6DLApp`）。
+     */
+    private val _configLoaded = MutableStateFlow(false)
+    val configLoaded: StateFlow<Boolean> = _configLoaded
+
+    init {
+        // v1.0.x 的明文 API Key → Keystore 加密存储（幂等，无明文时什么都不做）
+        viewModelScope.launch { runCatching { store.migrateLegacyPlaintextKey() } }
+        // 等 DataStore 首次发出已保存配置后再让 UI 组合页面；
+        // 读失败也置 true，宁可让页面按默认单机模式报错，也不能永久停在加载态。
+        viewModelScope.launch {
+            runCatching { store.config.first() }
+            _configLoaded.value = true
+        }
+    }
+
     val downloadDir: java.io.File get() = engine.downloadDir
 
+    // ------------------------------------------------------------------ 发现页
+
+    data class DiscoverState(
+        val order: String = ORDER_SCORE,
+        val keyword: String = "",
+        val posts: List<Post> = emptyList(),
+        val loading: Boolean = false,
+        val reachedEnd: Boolean = false,
+        val error: String? = null,
+        val demo: Boolean = false,
+        val selectionMode: Boolean = false,
+        val selected: Set<Long> = emptySet(),
+        val busy: Boolean = false,
+    ) {
+        val selectedPosts: List<Post> get() = posts.filter { it.id in selected }
+    }
+
+    private val _discover = MutableStateFlow(DiscoverState())
+    val discover: StateFlow<DiscoverState> = _discover
+    private var discoverJob: Job? = null
+
+    fun setDiscoverOrder(order: String) {
+        if (_discover.value.order == order) return
+        _discover.update { it.copy(order = order) }
+        loadDiscover(reset = true)
+    }
+
+    fun setDiscoverKeyword(keyword: String) {
+        if (_discover.value.keyword == keyword) return
+        _discover.update { it.copy(keyword = keyword) }
+        loadDiscover(reset = true)
+    }
+
+    /** 加载发现页；[reset] = true 重新从第一页开始。 */
+    fun loadDiscover(reset: Boolean = false) {
+        val snapshot = _discover.value
+        if (snapshot.demo) return
+        if (!reset && (snapshot.loading || snapshot.reachedEnd)) return
+        if (reset) {
+            discoverJob?.cancel()
+            discoverJob = null
+            _discover.update {
+                it.copy(
+                    posts = emptyList(),
+                    loading = true,
+                    reachedEnd = false,
+                    error = null,
+                    selected = emptySet(),
+                )
+            }
+        } else {
+            _discover.update { it.copy(loading = true, error = null) }
+        }
+
+        val order = snapshot.order
+        val keyword = snapshot.keyword
+        discoverJob = viewModelScope.launch {
+            try {
+                val cfg = config.value
+                val tags = listOf(order, keyword.trim()).filter { it.isNotEmpty() }
+                // 与桌面版一致：游客模式下发现页不使用黑名单
+                val blacklist = if (cfg.loggedIn) cfg.blacklist else emptyList()
+                val page = if (reset) 1 else _discover.value.posts.size / PAGE_LIMIT + 1
+                val batch = api.fetchPosts(
+                    cfg = cfg,
+                    tags = tags,
+                    blacklist = blacklist,
+                    limit = PAGE_LIMIT,
+                    page = page,
+                )
+                _discover.update { cur ->
+                    if (cur.order != order || cur.keyword != keyword) {
+                        cur // 过期响应（用户已换排序/关键词）
+                    } else {
+                        val merged = if (reset) batch else (cur.posts + batch).distinctBy { it.id }
+                        cur.copy(
+                            posts = merged,
+                            loading = false,
+                            reachedEnd = batch.size < PAGE_LIMIT,
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _discover.update { it.copy(loading = false, error = friendlyMessage(e)) }
+            }
+        }
+    }
+
+    fun setDiscoverSelectionMode(enabled: Boolean) {
+        _discover.update { it.copy(selectionMode = enabled, selected = if (enabled) it.selected else emptySet()) }
+    }
+
+    fun toggleDiscoverSelected(id: Long) {
+        _discover.update { st ->
+            val next = if (id in st.selected) st.selected - id else st.selected + id
+            st.copy(selected = next)
+        }
+    }
+
+    fun selectAllDiscover() {
+        _discover.update { it.copy(selected = it.posts.map { p -> p.id }.toSet()) }
+    }
+
+    fun clearDiscoverSelection() {
+        _discover.update { it.copy(selected = emptySet()) }
+    }
+
+    /** 批量收藏选中的作品（与桌面版 `_bulk_favorite` 一致：逐项请求、失败继续）。 */
+    fun batchFavorite(posts: List<Post>, onFinish: (String) -> Unit) {
+        if (posts.isEmpty()) {
+            onFinish("请先选择要收藏的作品。")
+            return
+        }
+        viewModelScope.launch {
+            val cfg = config.value
+            if (!cfg.loggedIn) {
+                onFinish("批量收藏需要先登录账号。")
+                return@launch
+            }
+            _discover.update { it.copy(busy = true) }
+            var ok = 0
+            var failed = 0
+            for (post in posts) {
+                try {
+                    api.addFavorite(cfg, post.id)
+                    ok++
+                    updatePostEverywhere(post.copy(isFavorited = true, favCount = post.favCount + 1))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failed++
+                }
+            }
+            _discover.update { it.copy(busy = false) }
+            markFavoritesDirty()
+            onFinish("已收藏 $ok 项" + if (failed > 0) "，失败 $failed 项" else "")
+        }
+    }
+
+    /** 批量拉黑：把所选作品的全部标签加入黑名单（与桌面版 `_bulk_blacklist` 一致）。 */
+    fun batchBlacklist(posts: List<Post>, onFinish: (String) -> Unit) {
+        val tags = posts.flatMap { it.tagsFlat }.distinct()
+        if (tags.isEmpty()) {
+            onFinish("所选作品没有可加入黑名单的标签。")
+            return
+        }
+        viewModelScope.launch {
+            var added = 0
+            store.update { cfg ->
+                val merged = cfg.blacklist.toMutableList()
+                tags.forEach { if (it !in merged) { merged.add(it); added++ } }
+                cfg.copy(blacklist = merged)
+            }
+            markFavoritesDirty()
+            onFinish("已加入 $added 个标签到黑名单")
+        }
+    }
+
+    // ------------------------------------------------------------------ 收藏页
+
+    data class FavoritesState(
+        val posts: List<Post> = emptyList(),
+        val loading: Boolean = false,
+        val loaded: Boolean = false,
+        val dirty: Boolean = true,
+        val message: String? = null,
+        val messageIsError: Boolean = false,
+        val demo: Boolean = false,
+        val selectionMode: Boolean = false,
+        val selected: Set<Long> = emptySet(),
+        val busy: Boolean = false,
+    ) {
+        val selectedPosts: List<Post> get() = posts.filter { it.id in selected }
+    }
+
+    private val _favorites = MutableStateFlow(FavoritesState())
+    val favorites: StateFlow<FavoritesState> = _favorites
+    private var favoritesJob: Job? = null
+
+    /** 收藏页在收藏状态发生变化后需要重新拉取。 */
+    fun markFavoritesDirty() {
+        _favorites.update { it.copy(dirty = true) }
+    }
+
+    fun loadFavorites(force: Boolean = false) {
+        val cfg = config.value
+        if (!cfg.loggedIn) {
+            _favorites.update {
+                it.copy(
+                    posts = emptyList(),
+                    loaded = false,
+                    loading = false,
+                    dirty = true,
+                    message = null,
+                    selectionMode = false,
+                    selected = emptySet(),
+                    busy = false,
+                )
+            }
+            return
+        }
+        val state = _favorites.value
+        if (state.demo) return
+        if (!force && !state.dirty && state.loaded) return
+        if (favoritesJob?.isActive == true) return
+
+        _favorites.update { it.copy(loading = true, message = null, messageIsError = false) }
+        favoritesJob = viewModelScope.launch {
+            try {
+                val all = api.fetchAllFavorites(config.value) { count ->
+                    _favorites.update { it.copy(message = "已加载 $count 项…", messageIsError = false) }
+                }
+                // 与桌面版一致：收藏页也按黑名单过滤，并且标记为已收藏
+                val visible = all
+                    .filterNot { post -> post.tagsFlat.any { tag -> tag in cfg.blacklist } }
+                    .map { it.copy(isFavorited = true) }
+                // 刷新后保留仍存在的选中项，避免"已选 N 项"里混入已被取消收藏的作品
+                val visibleIds = visible.map { post -> post.id }.toSet()
+                _favorites.update {
+                    it.copy(
+                        posts = visible,
+                        loading = false,
+                        loaded = true,
+                        dirty = false,
+                        message = if (visible.isEmpty()) "还没有收藏" else null,
+                        messageIsError = false,
+                        selected = it.selected.intersect(visibleIds),
+                        selectionMode = if (visible.isEmpty()) false else it.selectionMode,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _favorites.update {
+                    it.copy(
+                        loading = false,
+                        loaded = true,
+                        dirty = false,
+                        message = friendlyMessage(e),
+                        messageIsError = true,
+                    )
+                }
+            }
+        }
+    }
+
+    fun setFavoritesSelectionMode(enabled: Boolean) {
+        _favorites.update { it.copy(selectionMode = enabled, selected = if (enabled) it.selected else emptySet()) }
+    }
+
+    fun toggleFavoritesSelected(id: Long) {
+        _favorites.update { st ->
+            val next = if (id in st.selected) st.selected - id else st.selected + id
+            st.copy(selected = next)
+        }
+    }
+
+    fun selectAllFavorites() {
+        _favorites.update { it.copy(selected = it.posts.map { p -> p.id }.toSet()) }
+    }
+
+    fun clearFavoritesSelection() {
+        _favorites.update { it.copy(selected = emptySet()) }
+    }
+
+    /**
+     * 批量取消收藏（收藏页多选，与桌面版一致：逐项请求、失败继续）。
+     * 成功一项就立刻从 `_favorites` 里移除，不必等整批结束；结束后标脏以便下次刷新对齐服务端。
+     */
+    fun batchRemoveFavorite(posts: List<Post>, onFinish: (String) -> Unit) {
+        if (posts.isEmpty()) {
+            onFinish("请先选择要取消收藏的作品。")
+            return
+        }
+        viewModelScope.launch {
+            val cfg = config.value
+            if (!cfg.loggedIn) {
+                onFinish("批量取消收藏需要先登录账号。")
+                return@launch
+            }
+            _favorites.update { it.copy(busy = true) }
+            var ok = 0
+            var failed = 0
+            try {
+                for (post in posts) {
+                    try {
+                        api.removeFavorite(cfg, post.id)
+                        ok++
+                        updatePostEverywhere(post.withFavorite(false))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed++
+                    }
+                }
+            } finally {
+                _favorites.update {
+                    it.copy(busy = false, selectionMode = false, selected = emptySet())
+                }
+                markFavoritesDirty()
+            }
+            onFinish("已取消收藏 $ok 项" + if (failed > 0) "，失败 $failed 项" else "")
+        }
+    }
+
+    // ------------------------------------------------------------------ 详情页
+
+    private val _selectedPost = MutableStateFlow<Post?>(null)
+    val selectedPost: StateFlow<Post?> = _selectedPost
+
+    fun openDetail(post: Post) {
+        _selectedPost.value = post
+    }
+
+    fun closeDetail() {
+        _selectedPost.value = null
+    }
+
+    /** 收藏 / 取消收藏。成功后会同步更新发现页、收藏页与详情页里的同一作品。 */
+    fun setFavorite(post: Post, favorited: Boolean, onFinish: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val cfg = config.value
+            if (!cfg.loggedIn) {
+                onFinish(false, "收藏需要先登录账号。")
+                return@launch
+            }
+            try {
+                if (favorited) api.addFavorite(cfg, post.id) else api.removeFavorite(cfg, post.id)
+                val updated = post.withFavorite(favorited)
+                updatePostEverywhere(updated)
+                markFavoritesDirty()
+                onFinish(true, if (favorited) "已添加到收藏" else "已取消收藏")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onFinish(false, friendlyMessage(e))
+            }
+        }
+    }
+
+    private fun updatePostEverywhere(post: Post) {
+        _selectedPost.update { if (it?.id == post.id) post else it }
+        _discover.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) post else it }) }
+        _favorites.update { st ->
+            val posts = if (post.isFavorited) {
+                st.posts.map { if (it.id == post.id) post else it }
+            } else {
+                st.posts.filterNot { it.id == post.id }
+            }
+            st.copy(posts = posts)
+        }
+    }
+
     // ------------------------------------------------------------------ 下载
+
     private val _progress = MutableStateFlow<DownloadProgress?>(null)
     val progress: StateFlow<DownloadProgress?> = _progress
     private var downloadJob: Job? = null
@@ -64,10 +454,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     onProgress = { _progress.value = it },
                 )
                 onFinish(result.message)
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 onFinish("已取消")
             } catch (e: Exception) {
-                onFinish(com.mikesteve.e621downloadler.net.friendlyMessage(e))
+                onFinish(friendlyMessage(e))
             } finally {
                 _progress.value = null
             }
@@ -81,6 +471,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun downloadSingle(post: Post, quality: String, onFinish: (String) -> Unit) {
         viewModelScope.launch {
+            val cfg = config.value
             val url = post.imageUrl(quality)
             if (url.isNullOrBlank()) {
                 onFinish("没有可下载的图片地址")
@@ -89,15 +480,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val target = java.io.File(engine.downloadDir, post.targetFilename())
             val tmp = java.io.File(engine.downloadDir, "${post.targetFilename()}.part")
             val ok = try {
-                engine.downloadOne(config.value, url, tmp, target)
+                engine.downloadOne(cfg, url, tmp, target)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 false
+            }
+            if (ok && cfg.loggedIn && cfg.rememberHistory && post.md5.isNotBlank()) {
+                engine.recordSeenMd5(post.md5)
             }
             onFinish(if (ok) "已保存：${target.name}" else "下载失败")
         }
     }
 
-    fun exportZip(uri: android.net.Uri, onFinish: (String) -> Unit) {
+    fun exportZip(uri: Uri, onFinish: (String) -> Unit) {
         viewModelScope.launch {
             try {
                 val count = engine.exportZip(uri)
@@ -110,17 +506,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openDownloadDirHint(): String = engine.downloadDir.absolutePath
 
-    /** 批量下载给定作品（收藏页用），按顺序逐张下载，失败不影响后续。 */
+    /** 批量下载给定作品（收藏页/批量选择用），按顺序逐张下载，失败不影响后续。 */
     fun downloadPosts(posts: List<Post>, quality: String, onFinish: (String) -> Unit) {
         if (posts.isEmpty()) {
             onFinish("没有可下载的作品")
             return
         }
         viewModelScope.launch {
+            val cfg = config.value
+            val remember = cfg.loggedIn && cfg.rememberHistory
             var ok = 0
             var skipped = 0
             var failed = 0
-            val cfg = config.value
             for (post in posts) {
                 if (post.isVideo) {
                     skipped++
@@ -134,11 +531,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val target = java.io.File(engine.downloadDir, post.targetFilename())
                 if (target.exists() && target.length() > 0) {
                     skipped++
+                    if (remember && post.md5.isNotBlank()) engine.recordSeenMd5(post.md5)
                     continue
                 }
                 val tmp = java.io.File(engine.downloadDir, "${post.targetFilename()}.part")
                 try {
-                    if (engine.downloadOne(cfg, url, tmp, target)) ok++ else failed++
+                    if (engine.downloadOne(cfg, url, tmp, target)) {
+                        ok++
+                        if (remember && post.md5.isNotBlank()) engine.recordSeenMd5(post.md5)
+                    } else {
+                        failed++
+                    }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     failed++
                 }
@@ -148,6 +553,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ------------------------------------------------------------------ 配置
+
     fun setMode(mode: String) = update { it.copy(mode = mode) }
     fun setTheme(theme: String) = update { it.copy(theme = theme) }
     fun setQuality(quality: String) = update { it.copy(quality = quality) }
@@ -197,7 +603,108 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 清空图片缓存：同时清 Coil 的磁盘缓存与内存缓存（旧实现只删目录，句柄未释放时无效）。 */
+    fun clearImageCache(): Boolean = try {
+        val loader = SingletonImageLoader.get(getApplication())
+        loader.diskCache?.clear()
+        loader.memoryCache?.clear()
+        true
+    } catch (e: Exception) {
+        false
+    }
+
+    // ------------------------------------------------------------------ 调试演示数据
+
+    /**
+     * 仅 debug 构建 + 启动参数 `e6dl_demo=true` 时调用：
+     * 注入一批**本地假数据**，用于在没有网络（开发期硬禁网）的情况下验证三种尺寸下的
+     * 网格/列表/详情布局。release 构建永远不会进入这里。
+     */
+    fun seedDebugShowcase() {
+        if (!BuildConfig.DEBUG) return
+        val samples = buildList {
+            repeat(12) { index ->
+                val id = 900000L + index
+                val wide = index % 3 == 0
+                add(
+                    Post(
+                        id = id,
+                        md5 = "demo%04d".format(index).padEnd(32, '0').take(32),
+                        ext = "jpg",
+                        fileUrl = null,
+                        sampleUrl = null,
+                        previewUrl = null,
+                        width = if (wide) 1920 else 1200,
+                        height = if (wide) 1080 else 1600,
+                        score = 42 + index,
+                        rating = when (index % 3) { 0 -> "s"; 1 -> "q"; else -> "e" },
+                        tags = linkedMapOf(
+                            "general" to listOf("demo_tag_$index", "sample"),
+                            "artist" to listOf("demo_artist"),
+                        ),
+                        isFavorited = index < 6,
+                        favCount = 100 + index,
+                        uploaderName = "demo_uploader",
+                        commentCount = 3 + index,
+                    ),
+                )
+            }
+            // 演示用视频作品：videoUrl 指向一个不可达地址，用来验证播放器 UI 与错误提示
+            // （开发构建没有 INTERNET 权限，本来也放不了真实视频；发布版会替换成 e621 的视频地址）。
+            add(
+                Post(
+                    id = 900012L,
+                    md5 = "demoVideo00000000000000000000000".take(32),
+                    ext = "webm",
+                    fileUrl = null,
+                    sampleUrl = null,
+                    previewUrl = null,
+                    width = 1280,
+                    height = 720,
+                    score = 55,
+                    rating = "q",
+                    tags = linkedMapOf(
+                        "general" to listOf("demo_video", "sample"),
+                        "artist" to listOf("demo_artist"),
+                    ),
+                    isFavorited = false,
+                    favCount = 9,
+                    uploaderName = "demo_uploader",
+                    commentCount = 1,
+                    videoUrl = "https://example.invalid/demo.webm",
+                ),
+            )
+        }
+        _discover.value = DiscoverState(
+            posts = samples,
+            loading = false,
+            reachedEnd = true,
+            demo = true,
+        )
+        _favorites.value = FavoritesState(
+            posts = samples.take(8).map { it.copy(isFavorited = true) },
+            loading = false,
+            loaded = true,
+            dirty = false,
+            demo = true,
+        )
+    }
+
     private fun update(transform: (Config) -> Config) {
         viewModelScope.launch { store.update(transform) }
+    }
+
+    init {
+        // 演示数据必须在首帧之前就位，避免"先显示空态、随后才出现数据"的闪动。
+        // 注意：这段 init 必须放在 _discover / _favorites 等属性初始化之后（Kotlin 按声明顺序执行）。
+        if (DebugFlags.demo) seedDebugShowcase()
+    }
+
+    companion object {
+        /** 与桌面版 `DiscoverPage.PAGE_LIMIT` 一致。 */
+        const val PAGE_LIMIT = 24
+        const val ORDER_SCORE = "order:score"
+        const val ORDER_NEWEST = "order:newest"
+        const val ORDER_RANDOM = "order:random"
     }
 }

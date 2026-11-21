@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- ======================= 原有条目（保留） ======================= -->
     <string name="app_name">E6DL</string>
     <string name="app_tagline">e621 浏览与批量下载</string>
     <string name="net_locked_title">开发版本：网络已锁死</string>
@@ -8,4 +9,191 @@
     <string name="net_release_body">这是发布构建，可以访问 e621 接口。</string>
     <string name="mode_offline">单机模式</string>
     <string name="mode_online">在线模式</string>
+
+    <!-- ======================= 导航 / 通用动作 ======================= -->
+    <string name="e6dl_tab_discover">发现</string>
+    <string name="e6dl_tab_search">搜索下载</string>
+    <string name="e6dl_tab_favorites">我的收藏</string>
+    <string name="e6dl_tab_blacklist">黑名单</string>
+    <string name="e6dl_tab_settings">设置</string>
+
+    <string name="e6dl_action_search">搜索</string>
+    <string name="e6dl_action_select">选择</string>
+    <string name="e6dl_action_deselect">取消选择</string>
+    <string name="e6dl_action_refresh">刷新</string>
+    <string name="e6dl_action_reload">重新加载</string>
+    <string name="e6dl_action_select_all">全选</string>
+    <string name="e6dl_action_exit">退出</string>
+    <string name="e6dl_action_favorite">收藏</string>
+    <string name="e6dl_action_blacklist">拉黑</string>
+    <string name="e6dl_action_download_selected">下载选中</string>
+    <string name="e6dl_action_cancel">取消</string>
+    <string name="e6dl_action_back">返回</string>
+    <string name="e6dl_action_clear">清空</string>
+    <string name="e6dl_action_add">添加</string>
+    <string name="e6dl_action_login">登录 e621</string>
+    <string name="e6dl_selection_count">已选 %1$d 项</string>
+
+    <!-- ======================= 作品卡片 ======================= -->
+    <string name="e6dl_post_video">视频</string>
+    <string name="e6dl_post_selected">已选中</string>
+    <string name="e6dl_post_unselected">未选中</string>
+
+    <!-- ======================= 详情占位（双栏空态） ======================= -->
+    <string name="e6dl_detail_no_selection_title">未选择作品</string>
+    <string name="e6dl_detail_no_selection_desc">从列表中选择一个作品，详情会显示在这里。</string>
+
+    <!-- ======================= 发现页 ======================= -->
+    <string name="e6dl_order_hot">热门</string>
+    <string name="e6dl_order_newest">最新</string>
+    <string name="e6dl_order_random">随机</string>
+    <string name="e6dl_discover_keyword_hint">关键词过滤（可留空）</string>
+    <string name="e6dl_discover_demo_hint">演示数据：debug 构建启动参数 e6dl_demo=true 时注入，用于离线验证布局。</string>
+    <string name="e6dl_discover_guest_blacklist_hint">游客模式下发现页不使用黑名单（与桌面版一致）</string>
+    <string name="e6dl_discover_empty_title">暂无推荐内容</string>
+    <string name="e6dl_discover_empty_desc">检查网络后重试，或切换推荐排序。开发构建禁止联网属预期。</string>
+    <string name="e6dl_discover_reached_end">已经到底了</string>
+
+    <!-- ======================= 批量拉黑 ======================= -->
+    <string name="e6dl_batch_blacklist_title">批量拉黑</string>
+    <string name="e6dl_batch_blacklist_confirm">加入黑名单</string>
+    <string name="e6dl_batch_blacklist_desc_discover">将把所选作品的 %1$d 个标签加入黑名单，含这些标签的作品不再出现。</string>
+    <string name="e6dl_batch_blacklist_desc_favorites">将把所选作品的 %1$d 个标签加入黑名单，收藏页中含这些标签的作品会被移除。</string>
+
+    <!-- ======================= 登录对话框 ======================= -->
+    <string name="e6dl_login_title">登录 e621</string>
+    <string name="e6dl_login_desc">使用 e621 用户名与 API Key 登录。API Key 仅保存在本机。</string>
+    <string name="e6dl_login_username">用户名</string>
+    <string name="e6dl_login_show_key">显示 API Key</string>
+    <string name="e6dl_login_hide_key">隐藏 API Key</string>
+    <string name="e6dl_login_save_validate">保存并校验</string>
+    <string name="e6dl_login_save_only">仅保存</string>
+
+    <!-- ======================= 收藏页 ======================= -->
+    <string name="e6dl_fav_download_loaded">下载已加载</string>
+    <string name="e6dl_fav_count">共 %1$d 项</string>
+    <string name="e6dl_fav_login_required_title">尚未登录</string>
+    <string name="e6dl_fav_login_required_desc">登录 e621 账号后即可查看并管理你的收藏。</string>
+    <string name="e6dl_fav_empty_title">还没有收藏</string>
+    <string name="e6dl_fav_empty_desc">在作品详情页点击「收藏」即可加入这里。</string>
+    <string name="e6dl_fav_batch_remove">取消收藏</string>
+
+    <!-- ======================= 详情页 ======================= -->
+    <string name="e6dl_detail_share">分享</string>
+    <string name="e6dl_detail_share_chooser">分享作品</string>
+    <string name="e6dl_detail_share_failed">没有找到可用的分享应用。</string>
+    <string name="e6dl_detail_tags_title">标签（点标签搜索）</string>
+    <!-- 两个前导空格用于和按钮内图标保持间距，双引号包裹以保留空白 -->
+    <string name="e6dl_detail_favorite">"  收藏"</string>
+    <string name="e6dl_detail_unfavorite">"  取消收藏"</string>
+    <string name="e6dl_detail_download_this">下载这张</string>
+    <string name="e6dl_detail_download_preview">下载预览图</string>
+    <string name="e6dl_detail_open_browser">在浏览器中打开</string>
+    <string name="e6dl_detail_no_image">没有可显示的图片</string>
+    <string name="e6dl_detail_image_loading">图片加载中或加载失败</string>
+    <string name="e6dl_detail_image_desc">作品 #%1$d</string>
+    <string name="e6dl_detail_stats">评分 %1$d · 收藏 %2$d · 分级 %3$s</string>
+    <string name="e6dl_detail_specs">%1$d×%2$d · %3$s · 画质 %4$s</string>
+    <string name="e6dl_detail_video_hint">视频可在上方播放器直接播放；若无法播放（网络/编码不支持），可用「在浏览器中打开」。</string>
+
+    <!-- ======================= 画质 ======================= -->
+    <string name="e6dl_quality_original">原图</string>
+    <string name="e6dl_quality_sample">采样图</string>
+    <string name="e6dl_quality_preview">预览图</string>
+
+    <!-- ======================= 搜索下载页 ======================= -->
+    <string name="e6dl_search_section_conditions">搜索条件</string>
+    <string name="e6dl_search_keyword_hint">关键词（多个用英文逗号分隔）</string>
+    <string name="e6dl_search_temp_blacklist_hint">本次黑名单（留空则用黑名单页设置）</string>
+    <string name="e6dl_search_max_pages">页数</string>
+    <string name="e6dl_search_limit">每页数量</string>
+    <string name="e6dl_search_min_score">最低评分</string>
+    <string name="e6dl_search_remember_history">登录后保存搜索历史与下载记录</string>
+    <string name="e6dl_search_start">开始下载</string>
+    <string name="e6dl_search_progress">已下载 %1$d · 跳过 %2$d · 失败 %3$d</string>
+    <string name="e6dl_search_history_title">搜索历史</string>
+    <string name="e6dl_search_history_empty">暂无记录</string>
+    <string name="e6dl_search_recent_keywords">最近关键词</string>
+
+    <!-- ======================= 设置页 ======================= -->
+    <string name="e6dl_settings_section_mode">运行模式</string>
+    <string name="e6dl_settings_mode_offline">单机模式</string>
+    <string name="e6dl_settings_mode_online">在线模式</string>
+    <string name="e6dl_settings_net_allowed_note">当前为发布构建，可以在线模式访问 e621。</string>
+    <string name="e6dl_settings_net_locked_note">开发构建：开关可以手动切换（状态会保存），但网络被双重锁死（无 INTERNET 权限 + NetGuard），实际不会发出任何请求。</string>
+    <string name="e6dl_settings_section_appearance">外观</string>
+    <string name="e6dl_settings_theme_system">跟随系统</string>
+    <string name="e6dl_settings_theme_light">浅色</string>
+    <string name="e6dl_settings_theme_dark">深色</string>
+    <string name="e6dl_settings_section_download">下载</string>
+    <string name="e6dl_settings_default_quality">默认画质</string>
+    <string name="e6dl_settings_download_dir">下载目录（应用专属，卸载即删）：\n%1$s</string>
+    <string name="e6dl_settings_export_zip">导出压缩包到其他文件夹…</string>
+    <string name="e6dl_settings_section_keyword_memory">搜索关键词记忆</string>
+    <string name="e6dl_settings_keyword_memory_count">保留最近 %1$d 条（0 = 不记忆）</string>
+    <string name="e6dl_settings_section_account">账号</string>
+    <string name="e6dl_settings_logged_in">已登录：%1$s</string>
+    <string name="e6dl_settings_change_account">更换账号</string>
+    <string name="e6dl_settings_logout">退出登录</string>
+    <string name="e6dl_settings_not_logged_in">未登录：可浏览与游客下载，收藏功能需要登录。</string>
+    <string name="e6dl_settings_key_storage_note">API Key 使用 Android Keystore 加密后保存在本机（v1.1 起不再明文落盘）；应用卸载或系统清除凭据后需要重新登录。</string>
+    <string name="e6dl_settings_section_local_data">本地数据</string>
+    <string name="e6dl_settings_clear_history">清空搜索历史</string>
+    <string name="e6dl_settings_clear_image_cache">清空图片缓存</string>
+    <string name="e6dl_settings_dedupe_note">去重记录：下载目录下的 downloaded_md5.txt（仅登录且勾选保存历史时写入）</string>
+    <string name="e6dl_settings_section_about">关于</string>
+    <string name="e6dl_settings_version">E6DL %1$s（%2$d）</string>
+    <string name="e6dl_settings_about_build">minSdk 24 · targetSdk 36 · 仅 arm64-v8a</string>
+    <string name="e6dl_settings_net_lock">开发期网络锁：%1$s</string>
+    <string name="e6dl_settings_net_lock_off">关闭（发布构建）</string>
+    <string name="e6dl_settings_net_lock_on">开启</string>
+    <string name="e6dl_settings_disclaimer">本项目为第三方工具，与 e621 官方无关联。</string>
+
+    <!-- ======================= 黑名单页 ======================= -->
+    <string name="e6dl_blacklist_add_section">添加要屏蔽的标签</string>
+    <string name="e6dl_blacklist_tag_hint">标签，例如：gore</string>
+    <string name="e6dl_blacklist_note">搜索时会以 -标签 的形式拼进查询；发现页与收藏页也会过滤。</string>
+    <string name="e6dl_blacklist_section">已屏蔽（%1$d）</string>
+    <string name="e6dl_blacklist_empty_title">黑名单为空</string>
+    <string name="e6dl_blacklist_empty_desc">被屏蔽的标签会从所有列表中隐藏。</string>
+    <string name="e6dl_blacklist_remove">移除 %1$s</string>
+    <string name="e6dl_video_no_url">没有可播放的视频地址，可用「在浏览器中打开」。</string>
+    <string name="e6dl_video_error">视频播放失败：%1$s（开发构建禁网时属预期；发布版请检查网络）</string>
+    <string name="e6dl_detail_author">作者：%1$s</string>
+    <string name="e6dl_detail_comment_count">评论 %1$d</string>
+
+    <!-- ======================= 评论区块（v1.3.0） ======================= -->
+    <string name="e6dl_comments_title">评论</string>
+    <string name="e6dl_comments_title_count">评论（%1$d）</string>
+    <string name="e6dl_comments_refresh">刷新评论</string>
+    <string name="e6dl_comments_empty">还没有评论。</string>
+    <string name="e6dl_comments_offline">当前为单机模式，已禁用联网。请在「设置 › 运行模式」切换为在线模式后查看评论。</string>
+    <string name="e6dl_comments_offline_hint">单机模式下无法发表评论。</string>
+    <string name="e6dl_comments_login_hint">登录后可发表评论。</string>
+    <string name="e6dl_comments_input_label">发表评论</string>
+    <string name="e6dl_comments_input_placeholder">说点什么…</string>
+    <string name="e6dl_comments_send">发送</string>
+    <string name="e6dl_comments_sending">发送中…</string>
+    <string name="e6dl_comments_sending_hint">正在发送…</string>
+    <string name="e6dl_comments_posted">评论已发表</string>
+    <string name="e6dl_comments_sticky">置顶</string>
+    <string name="e6dl_comments_hidden">已隐藏</string>
+
+    <!-- ======================= 运行模式切换 / 操作反馈（v1.3.0） ======================= -->
+    <string name="e6dl_settings_mode_switched_offline">已切换为单机模式，联网功能已全部禁用；返回主页后会自动重新加载。</string>
+    <string name="e6dl_settings_mode_switched_online">已切换为在线模式，返回主页后会自动重新加载。</string>
+    <string name="e6dl_settings_mode_switched_online_locked">已切换为在线模式，返回主页后会自动重新加载；但这是开发构建：网络仍被锁死（没有 INTERNET 权限），请求会直接失败。</string>
+    <string name="e6dl_settings_mode_current_offline">当前保存的运行模式：单机（重启后自动沿用）</string>
+    <string name="e6dl_settings_mode_current_online">当前保存的运行模式：在线（重启后自动沿用）</string>
+    <string name="e6dl_settings_logout_done">已退出登录，本机保存的用户名与 API Key 已删除。</string>
+    <string name="e6dl_settings_history_cleared">搜索历史已清空。</string>
+    <string name="e6dl_settings_cache_cleared">图片缓存已清空。</string>
+    <string name="e6dl_settings_cache_clear_failed">清空缓存失败。</string>
+
+    <!-- ======================= 批量操作通用提示（v1.3.0） ======================= -->
+    <string name="e6dl_batch_download_start">开始下载 %1$d 项…</string>
+    <string name="e6dl_select_blacklist_first">请先选择要拉黑的作品。</string>
+    <string name="e6dl_select_download_first">请先选择要下载的作品。</string>
+    <string name="e6dl_fav_select_remove_first">请先选择要取消收藏的作品。</string>
+    <string name="e6dl_fav_removing">正在取消收藏 %1$d 项…</string>
 </resources>

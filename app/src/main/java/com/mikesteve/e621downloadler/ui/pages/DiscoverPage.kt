@@ -3,21 +3,33 @@ package com.mikesteve.e621downloadler.ui.pages
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -25,32 +37,35 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.mikesteve.e621downloadler.R
+import com.mikesteve.e621downloadler.data.Config
 import com.mikesteve.e621downloadler.data.Post
-import com.mikesteve.e621downloadler.net.friendlyMessage
 import com.mikesteve.e621downloadler.ui.AppViewModel
+import com.mikesteve.e621downloadler.ui.DebugFlags
 import com.mikesteve.e621downloadler.ui.components.EmptyState
 import com.mikesteve.e621downloadler.ui.components.InfoBar
+import com.mikesteve.e621downloadler.ui.components.InfoType
 import com.mikesteve.e621downloadler.ui.components.PostCard
-import kotlinx.coroutines.launch
 
 private val ORDER_OPTIONS = listOf(
-    "order:score" to "热门",
-    "order:newest" to "最新",
-    "order:random" to "随机",
+    AppViewModel.ORDER_SCORE to R.string.e6dl_order_hot,
+    AppViewModel.ORDER_NEWEST to R.string.e6dl_order_newest,
+    AppViewModel.ORDER_RANDOM to R.string.e6dl_order_random,
 )
-
-private const val PAGE_LIMIT = 24
 
 /**
  * 发现页（对齐桌面版 `DiscoverPage`）：
- * 排序三选一 + 关键词过滤 + 瀑布流触底加载；黑名单**仅登录时生效**（保持与桌面版一致）。
+ * 排序三选一 + 关键词过滤 + 瀑布流触底加载 + **多选批量收藏/拉黑/下载**。
+ * 黑名单**仅登录时生效**（与桌面版一致）。
  */
 @Composable
 fun DiscoverPage(
@@ -59,125 +74,279 @@ fun DiscoverPage(
     modifier: Modifier = Modifier,
 ) {
     val cfg by vm.config.collectAsState()
-    var order by remember { mutableStateOf(ORDER_OPTIONS.first().first) }
-    var keyword by remember { mutableStateOf("") }
-    var posts by remember { mutableStateOf<List<Post>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var reachedEnd by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val state by vm.discover.collectAsState()
+    val gridState = rememberLazyStaggeredGridState()
 
-    val gridState = rememberLazyGridState()
-    val scope = rememberCoroutineScope()
+    var keywordInput by remember(state.keyword) { mutableStateOf(state.keyword) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var messageType by remember { mutableStateOf(InfoType.Info) }
+    var showBlacklistConfirm by remember { mutableStateOf(false) }
 
-    suspend fun loadPage(reset: Boolean) {
-        if (loading) return
-        if (reset) {
-            posts = emptyList()
-            reachedEnd = false
-            error = null
-        }
-        if (reachedEnd) return
-        loading = true
-        try {
-            val page = posts.size / PAGE_LIMIT + 1
-            val tags = listOf(order, keyword.trim()).filter { it.isNotEmpty() }
-            val blacklist = if (cfg.loggedIn) cfg.blacklist else emptyList()
-            val batch = vm.api.fetchPosts(cfg, tags = tags, blacklist = blacklist, limit = PAGE_LIMIT, page = page)
-            if (batch.isEmpty()) {
-                reachedEnd = true
-            } else {
-                posts = posts + batch
-                if (batch.size < PAGE_LIMIT) reachedEnd = true
-            }
-        } catch (e: Exception) {
-            error = friendlyMessage(e)
-        } finally {
-            loading = false
+    val context = LocalContext.current
+    // 在组合期取文本：onClick / 本地函数等非 @Composable 作用域里不能直接调 stringResource。
+    val selectBlacklistFirstMessage = stringResource(R.string.e6dl_select_blacklist_first)
+
+    // 首次进入（或上次失败后列表为空）时加载；演示数据模式下不联网
+    LaunchedEffect(Unit) {
+        if (state.posts.isEmpty() && !state.loading && !state.demo && !DebugFlags.demo) {
+            vm.loadDiscover(reset = true)
         }
     }
 
-    LaunchedEffect(order) { loadPage(reset = true) }
+    // 联网模式切换：从离线切到 online 且当前没有数据 / 上次报错时自动重拉，
+    // 避免用户切完模式还得手动点刷新。
+    LaunchedEffect(cfg.mode) {
+        if (cfg.mode != Config.MODE_ONLINE) return@LaunchedEffect
+        val snapshot = vm.discover.value
+        if (snapshot.demo || DebugFlags.demo || snapshot.loading) return@LaunchedEffect
+        if (snapshot.posts.isEmpty() || snapshot.error != null) {
+            vm.loadDiscover(reset = true)
+        }
+    }
 
-    // 触底加载
+    // 触底加载：最后 4 个可见项时尝试下一页
     val nearEnd by remember {
         derivedStateOf {
             val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            last >= posts.size - 4
+            last >= state.posts.size - 4
         }
     }
-    LaunchedEffect(gridState) {
-        snapshotFlow { nearEnd }.collect { if (it) scope.launch { loadPage(reset = false) } }
+    LaunchedEffect(gridState, state.posts.size) {
+        snapshotFlow { nearEnd }.collect { if (it) vm.loadDiscover(reset = false) }
+    }
+
+    fun runBatchDownload(posts: List<Post>) {
+        message = context.getString(R.string.e6dl_batch_download_start, posts.size)
+        messageType = InfoType.Info
+        vm.downloadPosts(posts, cfg.quality) { result ->
+            message = result
+            messageType = if (result.contains("失败")) InfoType.Warning else InfoType.Success
+        }
+        vm.setDiscoverSelectionMode(false)
     }
 
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             OutlinedTextField(
-                value = keyword,
-                onValueChange = { keyword = it },
-                label = { Text("关键词过滤（可留空）") },
+                value = keywordInput,
+                onValueChange = { keywordInput = it },
+                label = { Text(stringResource(R.string.e6dl_discover_keyword_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { scope.launch { loadPage(reset = true) } }),
+                keyboardActions = KeyboardActions(onSearch = { vm.setDiscoverKeyword(keywordInput) }),
+                trailingIcon = {
+                    IconButton(onClick = { vm.setDiscoverKeyword(keywordInput) }) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = stringResource(R.string.e6dl_action_search),
+                        )
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
-            androidx.compose.foundation.layout.Row(
-                modifier = Modifier.padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+
+            Row(
+                modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ORDER_OPTIONS.forEach { (value, label) ->
+                ORDER_OPTIONS.forEach { (value, labelRes) ->
                     FilterChip(
-                        selected = order == value,
-                        onClick = { order = value },
-                        label = { Text(label) },
+                        selected = state.order == value,
+                        onClick = { vm.setDiscoverOrder(value) },
+                        label = { Text(stringResource(labelRes)) },
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        if (state.selectionMode) {
+                            vm.setDiscoverSelectionMode(false)
+                        } else {
+                            vm.setDiscoverSelectionMode(true)
+                        }
+                    },
+                ) {
+                    Icon(
+                        imageVector = if (state.selectionMode) Icons.Filled.Close else Icons.Filled.Checklist,
+                        contentDescription = if (state.selectionMode) {
+                            stringResource(R.string.e6dl_action_deselect)
+                        } else {
+                            stringResource(R.string.e6dl_action_select)
+                        },
+                    )
+                }
+                IconButton(
+                    onClick = { vm.loadDiscover(reset = true) },
+                    enabled = !state.loading,
+                ) {
+                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.e6dl_action_refresh))
+                }
             }
+
+            // 批量条：只要处于选择模式或已有选中项就显示（复选框常驻后，
+            // 用户不点顶栏选择按钮、直接勾选也能立刻看到批量操作入口）。
+            if (state.selectionMode || state.selected.isNotEmpty()) {
+                SelectionBar(
+                    count = state.selected.size,
+                    loggedIn = cfg.loggedIn,
+                    busy = state.busy,
+                    onSelectAll = { vm.selectAllDiscover() },
+                    onFavorite = { vm.batchFavorite(state.selectedPosts) { result -> message = result; messageType = InfoType.Success } },
+                    onBlacklist = {
+                        if (state.selected.isEmpty()) {
+                            message = selectBlacklistFirstMessage
+                            messageType = InfoType.Warning
+                        } else {
+                            showBlacklistConfirm = true
+                        }
+                    },
+                    onDownload = { runBatchDownload(state.selectedPosts) },
+                    onCancel = { vm.setDiscoverSelectionMode(false) },
+                )
+            }
+
             InfoBar(
-                message = error ?: if (!cfg.loggedIn && cfg.blacklist.isNotEmpty()) {
-                    "游客模式下发现页不使用黑名单（与桌面版一致）"
-                } else {
-                    null
-                },
+                message = message
+                    ?: state.error
+                    ?: if (state.demo) {
+                        stringResource(R.string.e6dl_discover_demo_hint)
+                    } else if (!cfg.loggedIn && cfg.blacklist.isNotEmpty()) {
+                        stringResource(R.string.e6dl_discover_guest_blacklist_hint)
+                    } else {
+                        null
+                    },
+                type = if (state.error != null) InfoType.Warning else messageType,
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
 
-        if (posts.isEmpty() && !loading && error == null) {
-            EmptyState(
-                title = "暂无推荐内容",
-                description = "检查网络后重试，或切换推荐排序。开发构建禁止联网，属预期。",
+        when {
+            state.posts.isEmpty() && state.loading -> Row(
+                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) { CircularProgressIndicator() }
+
+            state.posts.isEmpty() -> EmptyState(
+                title = stringResource(R.string.e6dl_discover_empty_title),
+                description = stringResource(R.string.e6dl_discover_empty_desc),
+                action = {
+                    Button(onClick = { vm.loadDiscover(reset = true) }) {
+                        Text(stringResource(R.string.e6dl_action_reload))
+                    }
+                },
             )
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp),
+
+            else -> LazyVerticalStaggeredGrid(
+                columns = StaggeredGridCells.Adaptive(minSize = 160.dp),
                 state = gridState,
                 contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalItemSpacing = 12.dp,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                items(posts, key = { it.id }) { post ->
-                    PostCard(post = post, quality = cfg.quality, onClick = { onOpenPost(post) })
+                items(state.posts, key = { it.id }) { post ->
+                    PostCard(
+                        post = post,
+                        quality = cfg.quality,
+                        selected = if (state.selectionMode) post.id in state.selected else null,
+                        // 复选框常驻：勾选即进入选择模式并切换选中，点击卡片仍打开详情。
+                        showCheckbox = true,
+                        checked = post.id in state.selected,
+                        onCheckedChange = {
+                            vm.setDiscoverSelectionMode(true)
+                            vm.toggleDiscoverSelected(post.id)
+                        },
+                        onClick = { onOpenPost(post) },
+                        onLongClick = {
+                            if (!state.selectionMode) vm.setDiscoverSelectionMode(true)
+                            vm.toggleDiscoverSelected(post.id)
+                        },
+                    )
                 }
-                if (loading) {
-                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                        Column(
+                if (state.loading) {
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        Row(
                             modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            CircularProgressIndicator()
-                        }
+                            horizontalArrangement = Arrangement.Center,
+                        ) { CircularProgressIndicator() }
                     }
                 }
-                if (reachedEnd && posts.isNotEmpty()) {
-                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                if (state.reachedEnd && state.posts.isNotEmpty() && !state.loading) {
+                    item(span = StaggeredGridItemSpan.FullLine) {
                         Text(
-                            text = "已经到底了",
+                            text = stringResource(R.string.e6dl_discover_reached_end),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth().padding(16.dp),
                         )
                     }
                 }
+            }
+        }
+    }
+
+    if (showBlacklistConfirm) {
+        val tags = state.selectedPosts.flatMap { it.tagsFlat }.distinct()
+        AlertDialog(
+            onDismissRequest = { showBlacklistConfirm = false },
+            title = { Text(stringResource(R.string.e6dl_batch_blacklist_title)) },
+            text = {
+                Text(
+                    stringResource(R.string.e6dl_batch_blacklist_desc_discover, tags.size),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBlacklistConfirm = false
+                    vm.batchBlacklist(state.selectedPosts) { result ->
+                        message = result
+                        messageType = InfoType.Success
+                    }
+                    vm.setDiscoverSelectionMode(false)
+                }) { Text(stringResource(R.string.e6dl_batch_blacklist_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBlacklistConfirm = false }) {
+                    Text(stringResource(R.string.e6dl_action_cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SelectionBar(
+    count: Int,
+    loggedIn: Boolean,
+    busy: Boolean,
+    onSelectAll: () -> Unit,
+    onFavorite: () -> Unit,
+    onBlacklist: () -> Unit,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(stringResource(R.string.e6dl_selection_count, count), style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onSelectAll) { Text(stringResource(R.string.e6dl_action_select_all)) }
+            TextButton(onClick = onCancel) { Text(stringResource(R.string.e6dl_action_exit)) }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(onClick = onFavorite, enabled = loggedIn && !busy) {
+                Text(stringResource(R.string.e6dl_action_favorite))
+            }
+            TextButton(onClick = onBlacklist) { Text(stringResource(R.string.e6dl_action_blacklist)) }
+            TextButton(onClick = onDownload) {
+                Text(stringResource(R.string.e6dl_action_download_selected))
             }
         }
     }

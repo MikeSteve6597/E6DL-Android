@@ -1,10 +1,12 @@
 package com.mikesteve.e621downloadler.ui
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
@@ -12,6 +14,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -20,18 +23,36 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
+import androidx.compose.material3.adaptive.layout.AnimatedPane
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
+import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
+import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirectiveWithTwoPanesOnMediumWidth
+import androidx.compose.material3.adaptive.navigation.BackNavigationBehavior
+import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
+import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
+import androidx.compose.material3.adaptive.separatingVerticalHingeBounds
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.window.core.layout.WindowSizeClass
+import com.mikesteve.e621downloadler.R
 import com.mikesteve.e621downloadler.data.Post
+import com.mikesteve.e621downloadler.ui.components.EmptyState
 import com.mikesteve.e621downloadler.ui.pages.BlacklistPage
 import com.mikesteve.e621downloadler.ui.pages.DetailPage
 import com.mikesteve.e621downloadler.ui.pages.DiscoverPage
@@ -39,34 +60,123 @@ import com.mikesteve.e621downloadler.ui.pages.FavoritesPage
 import com.mikesteve.e621downloadler.ui.pages.SearchPage
 import com.mikesteve.e621downloadler.ui.pages.SettingsPage
 import com.mikesteve.e621downloadler.ui.theme.E6DLTheme
+import kotlinx.coroutines.launch
 
-private enum class Destination(val label: String, val icon: ImageVector) {
-    Discover("发现", Icons.Filled.Whatshot),
-    Search("搜索下载", Icons.Filled.Search),
-    Favorites("我的收藏", Icons.Filled.Favorite),
-    Blacklist("黑名单", Icons.Filled.Block),
-    Settings("设置", Icons.Filled.Settings),
+private enum class Destination(val labelRes: Int, val icon: ImageVector) {
+    Discover(R.string.e6dl_tab_discover, Icons.Filled.Whatshot),
+    Search(R.string.e6dl_tab_search, Icons.Filled.Search),
+    Favorites(R.string.e6dl_tab_favorites, Icons.Filled.Favorite),
+    Blacklist(R.string.e6dl_tab_blacklist, Icons.Filled.Block),
+    Settings(R.string.e6dl_tab_settings, Icons.Filled.Settings),
 }
 
 /**
- * 应用外壳：自适应导航 + 五页切换 + 详情页覆盖 + 登录对话框。
+ * 应用外壳（v1.1 自适应版）。
  *
- * 导航形态按窗口宽度选择（Google Window Size Class 的三档阈值）：
- *  - Compact  (<600dp)  → 底部 NavigationBar
- *  - Medium/Expanded (≥600dp) → 左侧 NavigationRail
- * 这样手机、折叠屏展开、平板、分屏都能得到合理布局，而不是把手机布局拉宽。
+ * 布局策略（与 `Android/UI_DESIGN_GUIDELINES.md` 对齐）：
+ *  - **窗口尺寸**用 `WindowAdaptiveInfo`（WindowSizeClass）判断，不再用机型/屏幕宽度写死；
+ *  - **Compact（<600dp）**：底部 NavigationBar + 单栏；点开作品后详情占满整屏，返回回到列表；
+ *  - **Medium（600–839dp）**：左侧 NavigationRail + 单栏；
+ *  - **Expanded（≥840dp）**：左侧 Rail + **List-Detail 双栏**（列表保持可见，详情在右栏）；
+ *  - **折叠屏**：竖向分离铰链时强制双栏并由 `PaneScaffoldDirective` 自动避开铰链；
+ *    tabletop（横向半折）时 directive 会把双栏改为上下分区，详情页布局随之变成上下排布；
+ *  - **状态保留**：选中作品与列表数据在 ViewModel，旋转/折叠/分屏拖动不丢。
  */
+@OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 fun E6DLApp() {
     val vm: AppViewModel = viewModel()
     val cfg by vm.config.collectAsState()
+    // 配置是否已从 DataStore 读出：未读出前 config 只是默认占位值（单机），不能先组合页面。
+    val configLoaded by vm.configLoaded.collectAsState()
+    val selectedPost by vm.selectedPost.collectAsState()
 
-    var destination by remember { mutableStateOf(Destination.Discover) }
-    var detailPost by remember { mutableStateOf<Post?>(null) }
-    var showLogin by remember { mutableStateOf(false) }
+    var destinationName by rememberSaveable { mutableStateOf(Destination.Discover.name) }
+    val destination = Destination.valueOf(destinationName)
+    var showLogin by rememberSaveable { mutableStateOf(false) }
+    // 详情页点标签 → 切到「搜索下载」并把标签预填进关键词框。
+    // 搜索页消费后必须置空，否则每次进搜索页都会被旧标签覆盖用户输入。
+    var searchPrefill by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val widthDp = LocalConfiguration.current.screenWidthDp
-    val compact = widthDp < 600
+    val adaptiveInfo = currentWindowAdaptiveInfoV2()
+    val sizeClass = adaptiveInfo.windowSizeClass
+    val useRail = sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+    // 展开的折叠屏：即使宽度仍算 Medium，也优先用双栏（竖向铰链天然是分割线）
+    val hasSeparatingVerticalHinge = adaptiveInfo.windowPosture.separatingVerticalHingeBounds.isNotEmpty()
+
+    // 只有「发现 / 收藏」两个页面需要 List-Detail 双栏；搜索/黑名单/设置是整页表单，
+    // 直接用整页布局（见下方 Row 分支），避免右侧详情占位把内容挤到一半宽。
+    val listDetailEnabled = destination == Destination.Discover || destination == Destination.Favorites
+
+    val directive = remember(adaptiveInfo, hasSeparatingVerticalHinge) {
+        val base = if (hasSeparatingVerticalHinge) {
+            calculatePaneScaffoldDirectiveWithTwoPanesOnMediumWidth(adaptiveInfo)
+        } else {
+            calculatePaneScaffoldDirective(adaptiveInfo)
+        }
+        // 关闭 scaffold 的"自动聚焦当前面板"：否则首屏会把焦点交给列表里第一个可聚焦控件
+        // （发现页的关键词输入框），导致启动即弹出输入法。
+        PaneScaffoldDirective(
+            maxHorizontalPartitions = base.maxHorizontalPartitions,
+            horizontalPartitionSpacerSize = base.horizontalPartitionSpacerSize,
+            maxVerticalPartitions = base.maxVerticalPartitions,
+            verticalPartitionSpacerSize = base.verticalPartitionSpacerSize,
+            defaultPanePreferredWidth = base.defaultPanePreferredWidth,
+            defaultPanePreferredHeight = base.defaultPanePreferredHeight,
+            excludedBounds = base.excludedBounds,
+            shouldAutoFocusCurrentDestination = false,
+        )
+    }
+
+    // 调试日志：验证折叠/分屏时自适应判断是否生效（release 不输出）
+    LaunchedEffect(adaptiveInfo) {
+        if (com.mikesteve.e621downloadler.BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "E6DL-Ada",
+                "widthDp>=600:${sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)} " +
+                    ">=840:${sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)} " +
+                    "tabletop:${adaptiveInfo.windowPosture.isTabletop} " +
+                    "hinges:${adaptiveInfo.windowPosture.hingeList.size} " +
+                    "verticalHinge:${hasSeparatingVerticalHinge}",
+            )
+        }
+    }
+
+    // 内容键用 Long（作品 id），可安全放进 Bundle；作品对象本身存在 ViewModel 里
+    val navigator = rememberListDetailPaneScaffoldNavigator<Long>(scaffoldDirective = directive)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(destination, directive) {
+        if (com.mikesteve.e621downloadler.BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "E6DL-Ada",
+                "dest=$destination partitions=${directive.maxHorizontalPartitions} " +
+                    "scaffoldValue=${navigator.scaffoldValue}",
+            )
+        }
+    }
+
+    // 配置变更（旋转/折叠/分屏）后 navigator 会重建：用 ViewModel 里保存的选中作品恢复详情栏
+    LaunchedEffect(Unit) {
+        val stored = vm.selectedPost.value
+        if (stored != null && navigator.currentDestination?.contentKey != stored.id) {
+            navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, stored.id)
+        }
+    }
+    // 系统返回/返回手势关掉详情后，同步清空 ViewModel 选中状态。
+    // 注意：只有「明确回到列表栏」才清；初始 null 不能清，否则旋转后恢复详情的时序会被打断。
+    LaunchedEffect(navigator.currentDestination) {
+        val dest = navigator.currentDestination
+        if (com.mikesteve.e621downloadler.BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "E6DL-Ada",
+                "dest=${dest?.pane} content=${dest?.contentKey} canBack=${navigator.canNavigateBack(BackNavigationBehavior.PopUntilCurrentDestinationChange)}",
+            )
+        }
+        if (dest != null && dest.pane != ListDetailPaneScaffoldRole.Detail) {
+            vm.closeDetail()
+        }
+    }
 
     val dark = when (cfg.theme) {
         "light" -> false
@@ -75,62 +185,185 @@ fun E6DLApp() {
     }
 
     E6DLTheme(darkTheme = dark) {
-        // 详情页作为整屏覆盖，返回键先关详情
-        val current = detailPost
-        if (current != null) {
-            BackHandler { detailPost = null }
-            DetailPage(vm = vm, post = current, onBack = { detailPost = null })
+        // 启动时先等 DataStore 读回已保存配置，再组合任何页面：
+        // 否则页面会先用 config 的默认占位值（单机）发首次请求，"上次设为在线"也会被当成单机。
+        if (!configLoaded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
             return@E6DLTheme
         }
 
-        val content: @Composable (Modifier) -> Unit = { innerModifier ->
-            when (destination) {
-                Destination.Discover -> DiscoverPage(vm, onOpenPost = { detailPost = it }, modifier = innerModifier)
-                Destination.Search -> SearchPage(vm, modifier = innerModifier)
-                Destination.Favorites -> FavoritesPage(vm, onOpenPost = { detailPost = it }, modifier = innerModifier)
-                Destination.Blacklist -> BlacklistPage(vm, modifier = innerModifier)
-                Destination.Settings -> SettingsPage(vm, onOpenLogin = { showLogin = true }, modifier = innerModifier)
+        val openDetail: (Post) -> Unit = { post ->
+            vm.openDetail(post)
+            scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, post.id) }
+        }
+        val switchDestination: (Destination) -> Unit = { dest ->
+            destinationName = dest.name
+            if (navigator.currentDestination?.pane == ListDetailPaneScaffoldRole.Detail) {
+                vm.closeDetail()
+                scope.launch { navigator.navigateBack() }
             }
         }
 
-        if (compact) {
-            Scaffold(
-                bottomBar = {
-                    NavigationBar {
-                        Destination.entries.forEach { dest ->
-                            NavigationBarItem(
-                                selected = destination == dest,
-                                onClick = { destination = dest },
-                                icon = { Icon(dest.icon, contentDescription = dest.label) },
-                                label = { Text(dest.label) },
-                            )
-                        }
-                    }
-                },
-                containerColor = MaterialTheme.colorScheme.background,
-            ) { padding ->
-                content(Modifier.fillMaxSize().padding(padding))
-            }
-        } else {
-            Row(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            if (useRail) {
                 NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
                     Destination.entries.forEach { dest ->
                         NavigationRailItem(
                             selected = destination == dest,
-                            onClick = { destination = dest },
-                            icon = { Icon(dest.icon, contentDescription = dest.label) },
-                            label = { Text(dest.label) },
+                            onClick = { switchDestination(dest) },
+                            icon = { Icon(dest.icon, contentDescription = stringResource(dest.labelRes)) },
+                            label = { Text(stringResource(dest.labelRes)) },
                         )
                     }
                 }
-                Column(modifier = Modifier.fillMaxSize()) {
-                    content(Modifier.fillMaxSize())
+            }
+            if (useRail && !listDetailEnabled) {
+                // 搜索 / 黑名单 / 设置：整页表单布局，占满 Rail 之外的宽度
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    ListPane(
+                        vm = vm,
+                        destination = destination,
+                        compact = false,
+                        onSelect = switchDestination,
+                        onOpenPost = openDetail,
+                        onOpenLogin = { showLogin = true },
+                        initialSearchTags = searchPrefill,
+                        onSearchPrefillConsumed = { searchPrefill = null },
+                    )
                 }
+            } else {
+                NavigableListDetailPaneScaffold(
+                    navigator = navigator,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    // 双栏模式下 detail 栏即使没有选中项也保持展开（显示占位），
+                    // 此时 scaffoldValue 在"列表+详情占位"与"列表+详情"之间不变；
+                    // 默认的 PopUntilScaffoldValueChange 会认为无法返回 → 返回键直接退出应用。
+                    // 改成按"当前目的地变化"判断，返回手势就能从详情退回列表。
+                    defaultBackBehavior = BackNavigationBehavior.PopUntilCurrentDestinationChange,
+                    listPane = {
+                        AnimatedPane {
+                            ListPane(
+                                vm = vm,
+                                destination = destination,
+                                compact = !useRail,
+                                onSelect = switchDestination,
+                                onOpenPost = openDetail,
+                                onOpenLogin = { showLogin = true },
+                                initialSearchTags = searchPrefill,
+                                onSearchPrefillConsumed = { searchPrefill = null },
+                            )
+                        }
+                    },
+                    detailPane = {
+                        AnimatedPane {
+                            val post = selectedPost
+                            if (post != null) {
+                                DetailPage(
+                                    vm = vm,
+                                    post = post,
+                                    onBack = {
+                                        vm.closeDetail()
+                                        scope.launch { navigator.navigateBack() }
+                                    },
+                                    onLoginRequired = { showLogin = true },
+                                    onSearchTag = { tag ->
+                                        searchPrefill = tag
+                                        switchDestination(Destination.Search)
+                                    },
+                                )
+                            } else {
+                                Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+                                    EmptyState(
+                                        title = stringResource(R.string.e6dl_detail_no_selection_title),
+                                        description = stringResource(R.string.e6dl_detail_no_selection_desc),
+                                    )
+                                }
+                            }
+                        }
+                    },
+                )
             }
         }
 
         if (showLogin) {
             LoginDialog(vm = vm, onDismiss = { showLogin = false })
+        }
+    }
+}
+
+/** 列表栏：Compact 用底部导航，其余尺寸用外层 Rail，这里只负责内容区 + 系统栏内边距。 */
+@Composable
+private fun ListPane(
+    vm: AppViewModel,
+    destination: Destination,
+    compact: Boolean,
+    onSelect: (Destination) -> Unit,
+    onOpenPost: (Post) -> Unit,
+    onOpenLogin: () -> Unit,
+    initialSearchTags: String?,
+    onSearchPrefillConsumed: () -> Unit,
+) {
+    val content: @Composable (Modifier) -> Unit = { innerModifier ->
+        when (destination) {
+            Destination.Discover -> DiscoverPage(vm, onOpenPost = onOpenPost, modifier = innerModifier)
+            Destination.Search -> SearchPage(
+                vm,
+                modifier = innerModifier,
+                initialTags = initialSearchTags,
+                onPrefillConsumed = onSearchPrefillConsumed,
+            )
+            Destination.Favorites -> FavoritesPage(
+                vm,
+                onOpenPost = onOpenPost,
+                onOpenLogin = onOpenLogin,
+                modifier = innerModifier,
+            )
+            Destination.Blacklist -> BlacklistPage(vm, modifier = innerModifier)
+            Destination.Settings -> SettingsPage(vm, onOpenLogin = onOpenLogin, modifier = innerModifier)
+        }
+    }
+
+    if (compact) {
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
+                    Destination.entries.forEach { dest ->
+                        NavigationBarItem(
+                            selected = destination == dest,
+                            onClick = { onSelect(dest) },
+                            icon = { Icon(dest.icon, contentDescription = stringResource(dest.labelRes)) },
+                            label = { Text(stringResource(dest.labelRes)) },
+                        )
+                    }
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) { padding ->
+            content(Modifier.fillMaxSize().padding(padding))
+        }
+    } else {
+        // 内容区由 Scaffold 负责状态栏/导航栏 insets，避免双栏时内容压到系统栏下面。
+        // 整页表单（搜索/设置等）最宽限制 900dp 并居中，避免大屏上输入框被拉伸得过长。
+        Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(modifier = Modifier.widthIn(max = 900.dp).fillMaxHeight()) {
+                    content(Modifier.fillMaxSize())
+                }
+            }
         }
     }
 }

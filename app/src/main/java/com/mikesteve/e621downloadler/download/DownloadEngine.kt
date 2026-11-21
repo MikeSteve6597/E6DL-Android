@@ -60,6 +60,12 @@ class DownloadEngine(
         }
     }
 
+    /** 单张/批量下载成功后由调用方登记去重记录（仅登录且勾选保存历史时调用）。 */
+    fun recordSeenMd5(md5: String) {
+        if (md5.isBlank()) return
+        appendSeenMd5(md5)
+    }
+
     /**
      * 批量下载。会按页拉取（每页 `limit` 条，最多 `maxPages` 页），页间隔 1.1 s。
      *

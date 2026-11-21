@@ -1,5 +1,6 @@
 package com.mikesteve.e621downloadler.ui.pages
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,15 +21,19 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.mikesteve.e621downloadler.R
 import com.mikesteve.e621downloadler.data.Quality
 import com.mikesteve.e621downloadler.ui.AppViewModel
 import com.mikesteve.e621downloadler.ui.components.InfoBar
@@ -38,20 +43,37 @@ import com.mikesteve.e621downloadler.ui.components.SectionCard
 /**
  * 搜索下载页（对齐桌面版 `SearchPage`）：
  * 关键词 / 本次黑名单 / 画质 / 页数 / 每页数量 / 最低评分 / 保存历史 / 进度 / 取消 / 历史 / 最近关键词。
+ *
+ * @param initialTags 从详情页点标签跳过来时携带的标签；只用于「预填关键词输入框」，
+ *   不会自动触发下载。预填后立即通过 [onPrefillConsumed] 清空，避免下次进页面覆盖用户输入。
  */
 @Composable
-fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
+fun SearchPage(
+    vm: AppViewModel,
+    modifier: Modifier = Modifier,
+    initialTags: String? = null,
+    onPrefillConsumed: () -> Unit = {},
+) {
     val cfg by vm.config.collectAsState()
     val progress by vm.progress.collectAsState()
 
-    var tags by remember { mutableStateOf("") }
-    var tempBlacklist by remember { mutableStateOf("") }
-    var quality by remember(cfg.quality) { mutableStateOf(cfg.quality) }
-    var maxPages by remember(cfg.maxPages) { mutableStateOf(cfg.maxPages.toString()) }
-    var limit by remember(cfg.limit) { mutableStateOf(cfg.limit.toString()) }
-    var minScore by remember(cfg.minScore) { mutableStateOf(cfg.minScore.toString()) }
+    // 输入内容用 rememberSaveable：旋转/折叠/分屏拖动时不会丢
+    var tags by rememberSaveable { mutableStateOf("") }
+    var tempBlacklist by rememberSaveable { mutableStateOf("") }
+    var quality by rememberSaveable { mutableStateOf(cfg.quality) }
+    var maxPages by rememberSaveable { mutableStateOf(cfg.maxPages.toString()) }
+    var limit by rememberSaveable { mutableStateOf(cfg.limit.toString()) }
+    var minScore by rememberSaveable { mutableStateOf(cfg.minScore.toString()) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageType by remember { mutableStateOf(InfoType.Info) }
+
+    // 详情页点标签跳转：预填关键词后立刻消费掉，避免每次回到本页都覆盖用户已改的内容。
+    // 注意：这里只填输入框，不调用 start()，不自动开始下载。
+    LaunchedEffect(initialTags) {
+        val incoming = initialTags?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        tags = incoming.replace(' ', ',')
+        onPrefillConsumed()
+    }
 
     fun start() {
         val tagList = tags.split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -90,18 +112,18 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
     ) {
         InfoBar(message = message, type = messageType)
 
-        SectionCard(title = "搜索条件") {
+        SectionCard(title = stringResource(R.string.e6dl_search_section_conditions)) {
             OutlinedTextField(
                 value = tags,
                 onValueChange = { tags = it },
-                label = { Text("关键词（多个用英文逗号分隔）") },
+                label = { Text(stringResource(R.string.e6dl_search_keyword_hint)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = tempBlacklist,
                 onValueChange = { tempBlacklist = it },
-                label = { Text("本次黑名单（留空则用黑名单页设置）") },
+                label = { Text(stringResource(R.string.e6dl_search_temp_blacklist_hint)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -118,7 +140,7 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 OutlinedTextField(
                     value = maxPages,
                     onValueChange = { maxPages = it.filter(Char::isDigit) },
-                    label = { Text("页数") },
+                    label = { Text(stringResource(R.string.e6dl_search_max_pages)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
@@ -126,7 +148,7 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 OutlinedTextField(
                     value = limit,
                     onValueChange = { limit = it.filter(Char::isDigit) },
-                    label = { Text("每页数量") },
+                    label = { Text(stringResource(R.string.e6dl_search_limit)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
@@ -134,7 +156,7 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 OutlinedTextField(
                     value = minScore,
                     onValueChange = { minScore = it.filter { c -> c.isDigit() || c == '-' } },
-                    label = { Text("最低评分") },
+                    label = { Text(stringResource(R.string.e6dl_search_min_score)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
@@ -145,15 +167,20 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("登录后保存搜索历史与下载记录", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.e6dl_search_remember_history),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Switch(checked = cfg.rememberHistory, onCheckedChange = { vm.setRememberHistory(it) })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { start() }, enabled = progress == null) { Text("开始下载") }
+                Button(onClick = { start() }, enabled = progress == null) {
+                    Text(stringResource(R.string.e6dl_search_start))
+                }
                 OutlinedButton(
                     onClick = { vm.cancelDownload(); message = "正在取消…" },
                     enabled = progress != null,
-                ) { Text("取消") }
+                ) { Text(stringResource(R.string.e6dl_action_cancel)) }
             }
             progress?.let { p ->
                 LinearProgressIndicator(
@@ -163,7 +190,8 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    text = "已下载 ${p.done} · 跳过 ${p.skipped} · 失败 ${p.failed}${if (p.currentName.isNotEmpty()) " · ${p.currentName}" else ""}",
+                    text = stringResource(R.string.e6dl_search_progress, p.done, p.skipped, p.failed) +
+                        if (p.currentName.isNotEmpty()) " · ${p.currentName}" else "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -173,13 +201,21 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
             }
         }
 
-        SectionCard(title = "搜索历史") {
+        SectionCard(title = stringResource(R.string.e6dl_search_history_title)) {
             if (cfg.history.isEmpty()) {
-                Text("暂无记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    stringResource(R.string.e6dl_search_history_empty),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
                 cfg.history.forEach { h ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                tags = h.tags.joinToString(", ")
+                                tempBlacklist = h.blacklist.joinToString(", ")
+                            },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -191,12 +227,14 @@ fun SearchPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                         Text(h.time, style = MaterialTheme.typography.labelSmall)
                     }
                 }
-                TextButton(onClick = { vm.clearHistory() }) { Text("清空") }
+                TextButton(onClick = { vm.clearHistory() }) {
+                    Text(stringResource(R.string.e6dl_action_clear))
+                }
             }
         }
 
         if (cfg.recentKeywords.isNotEmpty() && cfg.keywordMemory > 0) {
-            SectionCard(title = "最近关键词") {
+            SectionCard(title = stringResource(R.string.e6dl_search_recent_keywords)) {
                 androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {

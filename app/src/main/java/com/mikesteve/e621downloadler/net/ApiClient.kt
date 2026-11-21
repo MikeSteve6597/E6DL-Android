@@ -1,6 +1,7 @@
 package com.mikesteve.e621downloadler.net
 
 import com.mikesteve.e621downloadler.BuildConfig
+import com.mikesteve.e621downloadler.data.Comment
 import com.mikesteve.e621downloadler.data.Config
 import com.mikesteve.e621downloadler.data.Post
 import kotlinx.coroutines.Dispatchers
@@ -245,5 +246,78 @@ class ApiClient(private val apiRoot: String = "https://e621.net") {
         val obj = JSONObject(body)
         val inner = obj.optJSONObject("post") ?: obj
         return if (inner.optLong("id") > 0) Post.from(inner) else null
+    }
+
+    // ------------------------------------------------------------------ 评论
+
+    /**
+     * 拉取某个作品的评论。
+     *
+     * 官方接口（openapi.yaml）：`GET /comments.json?search[post_id]=<id>&group_by=comment&limit=<n>&page=1`。
+     * 响应是 Comment 数组；也兼容被包一层 `{"comments": [...]}` 的形态。
+     *
+     * `search[post_id]` 直接作为参数名交给 `HttpUrl.Builder.addQueryParameter`，
+     * 由 okhttp 负责百分号编码（方括号不在查询串保留字符集里，会原样出现在 URL 上）。
+     */
+    suspend fun fetchComments(cfg: Config, postId: Long, limit: Int = 100): List<Comment> {
+        NetworkGate.require(cfg.mode)
+        val url = okhttp3.HttpUrl.Builder()
+            .scheme("https").host("e621.net").addPathSegment("comments.json")
+            .addQueryParameter("search[post_id]", postId.toString())
+            .addQueryParameter("group_by", "comment")
+            .addQueryParameter("limit", limit.toString())
+            .addQueryParameter("page", "1")
+            .build()
+        val body = execute(request("/comments.json", cfg).url(url).build())
+        return parseCommentList(body)
+    }
+
+    /**
+     * 发表评论。`POST /comments.json`，`application/x-www-form-urlencoded`：
+     * 必填 `comment[body]`、`comment[post_id]`；登录态由 [request] 统一附加 Basic auth。
+     *
+     * 未登录时不发请求，直接抛 401（界面侧按钮也会禁用并提示"登录后可发表评论"）。
+     * 成功（201）返回服务端新建的 Comment；调用方可用它把评论插到列表最前面。
+     */
+    suspend fun postComment(cfg: Config, postId: Long, body: String): Comment {
+        NetworkGate.require(cfg.mode)
+        if (!cfg.loggedIn) throw ApiException(401, "发表评论需要先登录")
+        val form = FormBody.Builder()
+            .add("comment[body]", body)
+            .add("comment[post_id]", postId.toString())
+            .build()
+        val text = execute(request("/comments.json", cfg).post(form).build())
+        // 201 正常返回 Comment 对象；若站点改版导致解析失败，用 JSONException 走
+        // friendlyMessage 的"接口返回格式无法解析"分支，而不是误报成服务器 5xx。
+        return parseComment(text) ?: throw org.json.JSONException("评论已发表，但返回内容为空或无法解析")
+    }
+
+    /** 评论列表：顶层数组 `[...]` 或 `{"comments": [...]}`。 */
+    private fun parseCommentList(body: String): List<Comment> {
+        val text = body.trimStart()
+        if (text.isEmpty()) return emptyList()
+        val array = if (text.startsWith("[")) {
+            org.json.JSONArray(body)
+        } else {
+            JSONObject(body).optJSONArray("comments") ?: org.json.JSONArray()
+        }
+        val out = ArrayList<Comment>(array.length())
+        for (i in 0 until array.length()) {
+            array.optJSONObject(i)?.let { out.add(Comment.from(it)) }
+        }
+        return out
+    }
+
+    /** 单条评论：`{...}` / `{"comment": {...}}` / `[{...}]`（发表接口 201 的三种可能形态）。 */
+    private fun parseComment(body: String): Comment? {
+        val text = body.trimStart()
+        if (text.isEmpty()) return null
+        if (text.startsWith("[")) {
+            val arr = org.json.JSONArray(body)
+            return arr.optJSONObject(0)?.let { Comment.from(it) }
+        }
+        val obj = JSONObject(body)
+        val inner = obj.optJSONObject("comment") ?: obj
+        return if (inner.optLong("id", 0L) > 0L) Comment.from(inner) else null
     }
 }

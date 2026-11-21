@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION") // VisualTransformation 迁移到 SecureTextField 留待下个版本
+
 package com.mikesteve.e621downloadler.ui
 
 import androidx.compose.foundation.layout.Column
@@ -13,11 +15,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.OutlinedTextField
+import com.mikesteve.e621downloadler.R
 
 /**
  * 登录对话框（对齐桌面版 `LoginDialog`）：用户名 + API Key。
@@ -25,6 +29,7 @@ import androidx.compose.material3.OutlinedTextField
  * 开发构建里「保存并校验」会失败（网络锁），这是预期；所以额外提供「仅保存」，
  * 方便在开发期把账号先存好，等发布构建再校验。
  */
+@Suppress("DEPRECATION") // PasswordVisualTransformation 仍是当前稳定 API；Material3 的 SecureTextField 迁移留待下个版本
 @Composable
 fun LoginDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     var username by remember { mutableStateOf("") }
@@ -35,14 +40,14 @@ fun LoginDialog(vm: AppViewModel, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("登录 e621") },
+        title = { Text(stringResource(R.string.e6dl_login_title)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text("使用 e621 用户名与 API Key 登录。API Key 仅保存在本机。")
+                Text(stringResource(R.string.e6dl_login_desc))
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("用户名") },
+                    label = { Text(stringResource(R.string.e6dl_login_username)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
@@ -56,7 +61,13 @@ fun LoginDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
                 TextButton(onClick = { showKey = !showKey }) {
-                    Text(if (showKey) "隐藏 API Key" else "显示 API Key")
+                    Text(
+                        if (showKey) {
+                            stringResource(R.string.e6dl_login_hide_key)
+                        } else {
+                            stringResource(R.string.e6dl_login_show_key)
+                        },
+                    )
                 }
                 hint?.let {
                     Text(it, modifier = Modifier.padding(top = 4.dp))
@@ -84,7 +95,7 @@ fun LoginDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                         }
                     }
                 },
-            ) { Text("保存并校验") }
+            ) { Text(stringResource(R.string.e6dl_login_save_validate)) }
         },
         dismissButton = {
             TextButton(
@@ -94,7 +105,7 @@ fun LoginDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                     }
                     onDismiss()
                 },
-            ) { Text("仅保存") }
+            ) { Text(stringResource(R.string.e6dl_login_save_only)) }
         },
     )
 }
