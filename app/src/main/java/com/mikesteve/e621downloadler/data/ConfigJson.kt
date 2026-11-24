@@ -17,6 +17,8 @@ object ConfigJson {
         put("mode", cfg.mode)
         put("theme", cfg.theme)
         put("quality", cfg.quality)
+        put("translation_engine", cfg.translationEngine)
+        put("translate_tags", cfg.translateTags)
         put("max_pages", cfg.maxPages)
         put("limit", cfg.limit)
         put("min_score", cfg.minScore)
@@ -52,6 +54,10 @@ object ConfigJson {
                 },
                 theme = ui?.optString("theme") ?: o.optString("theme", "system"),
                 quality = o.optString("quality", Quality.SAMPLE),
+                translationEngine = o.optString("translation_engine", Config.TRANSLATION_GOOGLE).let {
+                    if (it == Config.TRANSLATION_LOCAL) Config.TRANSLATION_LOCAL else Config.TRANSLATION_GOOGLE
+                },
+                translateTags = o.optBoolean("translate_tags", false),
                 maxPages = o.optInt("max_pages", 5).coerceIn(1, 50),
                 limit = o.optInt("limit", 50).coerceIn(1, 320),
                 minScore = o.optInt("min_score", 10),

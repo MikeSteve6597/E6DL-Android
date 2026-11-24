@@ -199,8 +199,15 @@ fun E6DLApp() {
             return@E6DLTheme
         }
 
+        // 打开详情时把「当前列表页」的作品一起交给 ViewModel：详情页据此支持左右滑动
+        // 切换上一个/下一个作品。搜索/黑名单/设置这类非列表页没有可滑动上下文，只传当前作品。
         val openDetail: (Post) -> Unit = { post ->
-            vm.openDetail(post)
+            val contextPosts = when (destination) {
+                Destination.Discover -> vm.discover.value.posts
+                Destination.Favorites -> vm.favorites.value.posts
+                else -> listOf(post)
+            }
+            vm.openDetail(post, contextPosts)
             scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, post.id) }
         }
         val switchDestination: (Destination) -> Unit = { dest ->

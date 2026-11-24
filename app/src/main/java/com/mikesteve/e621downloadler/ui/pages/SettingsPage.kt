@@ -16,6 +16,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -169,6 +170,60 @@ fun SettingsPage(
             OutlinedButton(onClick = { exportLauncher.launch("E6DL-export.zip") }) {
                 Text(stringResource(R.string.e6dl_settings_export_zip))
             }
+        }
+
+        SectionCard(title = stringResource(R.string.e6dl_settings_section_translation)) {
+            Text(
+                text = stringResource(R.string.e6dl_settings_translation_engine),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = cfg.translationEngine == Config.TRANSLATION_GOOGLE,
+                    onClick = { vm.setTranslationEngine(Config.TRANSLATION_GOOGLE) },
+                    label = { Text(stringResource(R.string.e6dl_settings_translation_google)) },
+                )
+                FilterChip(
+                    selected = cfg.translationEngine == Config.TRANSLATION_LOCAL,
+                    onClick = { vm.setTranslationEngine(Config.TRANSLATION_LOCAL) },
+                    label = { Text(stringResource(R.string.e6dl_settings_translation_local)) },
+                )
+            }
+            Text(
+                text = if (cfg.translationEngine == Config.TRANSLATION_LOCAL) {
+                    stringResource(R.string.e6dl_settings_translation_local_desc)
+                } else {
+                    stringResource(R.string.e6dl_settings_translation_google_desc)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!NetGuard.networkAllowed) {
+                Text(
+                    text = stringResource(R.string.e6dl_settings_translation_net_locked),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.e6dl_settings_translate_tags),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = cfg.translateTags,
+                    onCheckedChange = { vm.setTranslateTags(it) },
+                )
+            }
+            Text(
+                text = stringResource(R.string.e6dl_settings_translate_tags_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         SectionCard(title = stringResource(R.string.e6dl_settings_section_keyword_memory)) {

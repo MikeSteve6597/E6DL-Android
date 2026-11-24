@@ -378,12 +378,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedPost = MutableStateFlow<Post?>(null)
     val selectedPost: StateFlow<Post?> = _selectedPost
 
-    fun openDetail(post: Post) {
+    /**
+     * 详情页左右滑动所需的「上下文列表」：点开详情时由来源列表（发现/收藏）提供，
+     * 详情页用 `HorizontalPager` 在它们之间滑动切换上一个/下一个作品。
+     * 按 id 去重、保持来源顺序；只有单个作品时退化为一页。
+     */
+    private val _detailPosts = MutableStateFlow<List<Post>>(emptyList())
+    val detailPosts: StateFlow<List<Post>> = _detailPosts
+
+    /**
+     * 打开详情页。
+     *
+     * [contextPosts] 是当前列表页的作品列表（发现页 / 收藏页），用于左右滑动切换；
+     * 从其它入口（如设置页跳转、深链）打开时保持默认的 `listOf(post)`，即单页详情。
+     * 被点击的作品即使不在 [contextPosts] 里（列表刚好刷新过）也会补进末尾，
+     * 保证详情页至少能显示它自己，不会出现空白页。
+     */
+    fun openDetail(post: Post, contextPosts: List<Post> = listOf(post)) {
+        val merged = (contextPosts + post).distinctBy { it.id }
+        _detailPosts.value = merged
+        _selectedPost.value = merged.firstOrNull { it.id == post.id } ?: post
+    }
+
+    /** 左右滑动切换详情页作品：只更新当前作品，不动上下文列表（供 TopAppBar/分享等使用）。 */
+    fun showDetailPost(post: Post) {
         _selectedPost.value = post
     }
 
     fun closeDetail() {
         _selectedPost.value = null
+        _detailPosts.value = emptyList()
     }
 
     /** 收藏 / 取消收藏。成功后会同步更新发现页、收藏页与详情页里的同一作品。 */
@@ -410,6 +434,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun updatePostEverywhere(post: Post) {
         _selectedPost.update { if (it?.id == post.id) post else it }
+        // 详情页左右滑动列表里的同一作品也要同步（收藏状态/收藏数变化后翻回去仍是新数据）
+        _detailPosts.update { list -> list.map { if (it.id == post.id) post else it } }
         _discover.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) post else it }) }
         _favorites.update { st ->
             val posts = if (post.isFavorited) {
@@ -557,6 +583,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setMode(mode: String) = update { it.copy(mode = mode) }
     fun setTheme(theme: String) = update { it.copy(theme = theme) }
     fun setQuality(quality: String) = update { it.copy(quality = quality) }
+    fun setTranslationEngine(engine: String) = update {
+        it.copy(
+            translationEngine = if (engine == Config.TRANSLATION_LOCAL) {
+                Config.TRANSLATION_LOCAL
+            } else {
+                Config.TRANSLATION_GOOGLE
+            },
+        )
+    }
+    fun setTranslateTags(enabled: Boolean) = update { it.copy(translateTags = enabled) }
     fun setRememberHistory(enabled: Boolean) = update { it.copy(rememberHistory = enabled) }
     fun setKeywordMemory(limit: Int) = update { it.copy(keywordMemory = limit.coerceIn(0, Config.MAX_KEYWORD_MEMORY)) }
     fun setSearchDefaults(maxPages: Int, limit: Int, minScore: Int) = update {

@@ -1,14 +1,21 @@
 package com.mikesteve.e621downloadler.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -34,12 +41,15 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.mikesteve.e621downloadler.R
 import com.mikesteve.e621downloadler.data.Post
+import com.mikesteve.e621downloadler.ui.VideoFullscreenActivity
 
 /**
- * 应用内视频播放器（Media3 / ExoPlayer）。
+ * 应用内视频播放器（Media3 / ExoPlayer，v1.4.0 起支持全屏）。
  *
  * - 地址来自 `Post.videoUrl`（新接口 `files.video.*` 逐级回退；旧接口回退到 `file.url`）；
- * - 播放器随 Composable 销毁释放；Activity 进入后台（ON_STOP）自动暂停，避免后台继续解码；
+ * - 播放器随 Composable 销毁释放；应用进入后台（ON_STOP）自动暂停，避免后台继续解码；
+ * - **全屏**：点击「全屏播放」→ 独立 [VideoFullscreenActivity]（横屏 + 沉浸式 + 屏幕常亮），
+ *   从当前播放位置继续；全屏页关闭后返回详情页。
  * - 网络锁/单机模式由 `NetworkGate` 在 API 层拦截：开发构建下视频加载失败会显示错误文案，这是预期行为；
  * - SWF（Flash）不被 ExoPlayer 支持，会落到错误提示，可用「在浏览器中打开」。
  */
@@ -119,6 +129,38 @@ fun PostVideoPlayer(
                 )
             }
         }
+        // 全屏入口放在播放器区域之外：PlayerView 内部是 SurfaceView，叠在它上面的
+        // 普通 Compose 控件在部分设备/输入注入场景下收不到点击。
+        if (!videoUrl.isNullOrBlank()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = {
+                        val activity = context.findActivity()
+                        if (activity != null) {
+                            activity.startActivity(
+                                VideoFullscreenActivity.intent(
+                                    activity = activity,
+                                    url = videoUrl,
+                                    positionMs = player.currentPosition,
+                                    title = "#${post.id}",
+                                ),
+                            )
+                        }
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Fullscreen,
+                        contentDescription = stringResource(R.string.e6dl_video_fullscreen_play),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(text = stringResource(R.string.e6dl_video_fullscreen_play))
+                }
+            }
+        }
         errorText?.let { message ->
             Text(
                 text = stringResource(R.string.e6dl_video_error, message),
@@ -128,4 +170,11 @@ fun PostVideoPlayer(
             )
         }
     }
+}
+
+/** 从 Compose 的 Context 链里找到 Activity。 */
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

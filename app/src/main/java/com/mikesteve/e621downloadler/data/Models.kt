@@ -227,6 +227,8 @@ data class Config(
     val mode: String = MODE_OFFLINE,
     val theme: String = "system",
     val quality: String = Quality.SAMPLE,
+    val translationEngine: String = TRANSLATION_GOOGLE,
+    val translateTags: Boolean = false,
     val maxPages: Int = 5,
     val limit: Int = 50,
     val minScore: Int = 10,
@@ -243,6 +245,8 @@ data class Config(
     companion object {
         const val MODE_OFFLINE = "offline"
         const val MODE_ONLINE = "online"
+        const val TRANSLATION_GOOGLE = "google"
+        const val TRANSLATION_LOCAL = "local"
         const val MAX_HISTORY = 10
         const val MAX_KEYWORD_MEMORY = 50
         const val DEFAULT_KEYWORD_MEMORY = 10

@@ -41,8 +41,8 @@ android {
         minSdk = 24
         // 不上架商店，targetSdk 用 36；compileSdk 只影响可调用的 API。
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.3.0"
+        versionCode = 8
+        versionName = "1.4.0"
 
         // 只发 ARMv8（用户要求：只开发 arm64-v8a）
         ndk {
@@ -120,6 +120,8 @@ dependencies {
     // 应用内视频播放（ExoPlayer + 控制条 UI）
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    // 本地机翻（设备端翻译模型按需下载）
+    implementation(libs.mlkit.translate)
 
     debugImplementation(libs.androidx.ui.tooling)
 

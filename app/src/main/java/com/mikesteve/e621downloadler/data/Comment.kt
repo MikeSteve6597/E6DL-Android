@@ -8,8 +8,11 @@ import org.json.JSONObject
  * 只保留界面真正会用的字段；所有字段都"能读就读"，缺失时回退默认值，
  * 避免 e621 再改一次字段名就整页解析失败。
  *
- * 注意：`body` 是原始文本（含换行），由 Compose 的 `Text` 原样换行显示；
- * 这里不做任何 HTML/BBcode 解析，保持与桌面版一致。
+ * 注意：`body` 是原始 DText 文本（含换行与 `[quote]`/`[b]` 等标记），数据层不做解析；
+ * 界面侧的展示由 `data/DText.kt` 解析成节点树后渲染（见 `ui/components/DTextContent.kt`）。
+ *
+ * [creatorId] 用于生成"回复"引用里的用户链接（`"名字":/users/<id>`）；老数据缺失时为 0。
+ * 放在最后一个参数并给默认值，保证所有既有具名/位置构造调用都不受影响。
  */
 data class Comment(
     val id: Long,
@@ -20,6 +23,7 @@ data class Comment(
     val createdAt: String,
     val isSticky: Boolean,
     val isHidden: Boolean,
+    val creatorId: Long = 0L,
 ) {
     /** 作者名可能缺失/为 JSON null，界面上统一回退为"未知用户"。 */
     val authorLabel: String get() = creatorName.ifBlank { "未知用户" }
@@ -34,6 +38,7 @@ data class Comment(
             createdAt = json.textOrEmpty("created_at"),
             isSticky = json.optBoolean("is_sticky", false),
             isHidden = json.optBoolean("is_hidden", false),
+            creatorId = json.optLong("creator_id", 0L),
         )
     }
 }

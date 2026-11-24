@@ -196,4 +196,57 @@
     <string name="e6dl_select_download_first">请先选择要下载的作品。</string>
     <string name="e6dl_fav_select_remove_first">请先选择要取消收藏的作品。</string>
     <string name="e6dl_fav_removing">正在取消收藏 %1$d 项…</string>
+
+    <!-- ======================= 评论回复 / 翻译（v1.4.0） ======================= -->
+    <string name="e6dl_comments_reply">回复</string>
+    <string name="e6dl_comments_translate_comment">翻译评论</string>
+    <string name="e6dl_comments_show_original">显示原文</string>
+    <string name="e6dl_comments_translation">译文</string>
+    <string name="e6dl_comments_translating">翻译中…</string>
+    <string name="e6dl_comments_replying_to">正在回复 @%1$s</string>
+    <string name="e6dl_comments_translate_empty">翻译结果为空，请稍后再试。</string>
+
+    <!-- ======================= DText 引用块（v1.4.0） ======================= -->
+    <string name="e6dl_dtext_quote_said">%1$s 说：</string>
+
+    <!-- ======================= 视频全屏（v1.4.0） ======================= -->
+    <string name="e6dl_video_fullscreen_play">全屏播放</string>
+    <string name="e6dl_video_exit_fullscreen">退出全屏</string>
+
+    <!-- ======================= 详情页新增（v1.4.0） ======================= -->
+    <string name="e6dl_detail_download">下载</string>
+    <string name="e6dl_detail_author_more_works">查看该作者更多作品</string>
+    <string name="e6dl_detail_download_video_unsupported">%1$s（视频作品仅支持预览图）</string>
+    <string name="e6dl_detail_favorite_login_required">收藏需要先登录账号。</string>
+
+    <!-- ======================= 标签区块（v1.4.0） ======================= -->
+    <string name="e6dl_tags_title">标签</string>
+    <string name="e6dl_tags_translate_on">翻译标签</string>
+    <string name="e6dl_tags_translate_off">关闭标签翻译</string>
+    <string name="e6dl_tags_engine_local">本地机翻：内置词典（离线可用）</string>
+    <string name="e6dl_tags_engine_google">在线谷歌翻译：需联网，失败时自动用内置词典兜底</string>
+    <string name="e6dl_tags_progress">翻译中 %1$d/%2$d</string>
+    <string name="e6dl_tags_fallback_local">%1$s 已改用内置词典翻译标签。</string>
+    <string name="e6dl_tags_fallback_failed">%1$s 内置词典兜底失败：%2$s</string>
+    <string name="e6dl_tags_translated_limit">标签较多：已翻译前 %1$d 个（共 %2$d 个）。</string>
+    <string name="e6dl_tags_display_limit">共 %1$d 个标签，仅显示前 %2$d 个。</string>
+    <string name="e6dl_tags_group_artist">作者</string>
+    <string name="e6dl_tags_group_copyright">版权</string>
+    <string name="e6dl_tags_group_character">角色</string>
+    <string name="e6dl_tags_group_species">物种</string>
+    <string name="e6dl_tags_group_general">通用</string>
+    <string name="e6dl_tags_group_meta">元信息</string>
+    <string name="e6dl_tags_group_lore">设定</string>
+    <string name="e6dl_tags_group_invalid">无效</string>
+
+    <!-- ======================= 设置页翻译卡片（v1.4.0） ======================= -->
+    <string name="e6dl_settings_section_translation">翻译</string>
+    <string name="e6dl_settings_translation_engine">评论翻译引擎</string>
+    <string name="e6dl_settings_translation_google">在线谷歌翻译</string>
+    <string name="e6dl_settings_translation_local">本地机翻</string>
+    <string name="e6dl_settings_translation_local_desc">本地机翻：评论使用 Google ML Kit 设备端离线模型（需在在线模式首次翻译时下载模型）；标签使用内置词典。无网络、单机模式或模型不可用时自动回退内置词典。</string>
+    <string name="e6dl_settings_translation_google_desc">在线谷歌翻译：调用第三方公开翻译服务，需要连接网络；主接口失败时会回退 MyMemory。单机模式下不可用。</string>
+    <string name="e6dl_settings_translation_net_locked">开发构建网络锁：在线翻译不可用（不会发出任何请求）；离线演示请选择「本地机翻」。</string>
+    <string name="e6dl_settings_translate_tags">自动翻译作品标签</string>
+    <string name="e6dl_settings_translate_tags_desc">开启后详情页标签按分类分组显示，并在标签下方显示中文译文（首屏最多翻译 80 个，其余保持原文）。</string>
 </resources>
