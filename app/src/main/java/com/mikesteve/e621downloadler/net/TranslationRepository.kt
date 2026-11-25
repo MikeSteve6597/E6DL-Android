@@ -18,11 +18,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONArray
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -32,19 +34,35 @@ import kotlin.coroutines.resumeWithException
 enum class TranslationKind { COMMENT, TAG }
 
 /**
- * 翻译仓库（v1.4.0）。
+ * 在线翻译服务不可用（主服务与备用服务都失败时抛出）。
+ *
+ * 消息是可直接展示给用户的中文短句（不含响应正文、密钥等敏感信息）。
+ * 特意继承 [RuntimeException] 而不是 [IOException]：这样 `friendlyMessage` 会原样展示
+ * 翻译失败原因，而不会被统一映射成「无法连接到 e621」。
+ */
+class TranslationUnavailableException(message: String) : RuntimeException(message)
+
+/**
+ * 翻译仓库（v1.5.0）。
  *
  * 两套引擎：
- *  - [Config.TRANSLATION_GOOGLE]：在线翻译。**必须先过 [NetworkGate]**（开发版网络锁 +
- *    单机模式两道门禁），主接口 google translate 公共端点，失败回退 MyMemory；
- *    绝不绕过 NetGuard / NetworkGate。
+ *  - [Config.TRANSLATION_GOOGLE]：**在线翻译**。常量名只为兼容历史保存的配置而保留，
+ *    实际**不再请求 Google 端点**，改为第三方公开翻译服务：
+ *    * 主服务 MyMemory：`https://api.mymemory.translated.net/get`，按方向用
+ *      `en|zh-CN` / `zh-CN|en`（免费、无需密钥）；
+ *    * 备用服务 LibreTranslate 公共实例：POST JSON，`source` / `target` 用 `en` / `zh`，
+ *      实例不可用/限流时静默换下一个，全部失败再抛可读异常。
+ *    仍**必须先过 [NetworkGate]**（开发版网络锁 + 单机模式两道门禁），绝不绕过 NetGuard。
  *  - [Config.TRANSLATION_LOCAL]：本地机翻。标签直接查 `res/raw/local_tag_translations.tsv`
- *    内置词典；评论走 Google ML Kit 设备端翻译（English → Chinese，首次下载模型），
+ *    内置词典；评论走 ML Kit 设备端翻译（English → Chinese，首次下载模型），
  *    设备无 GMS / 无网络 / 模型下载失败时**静默回退**逐词词典翻译并保留未命中的英文词。
  *    单机模式或开发版网络锁下不会触发模型下载（模型已就绪时仍可纯离线使用 ML Kit），
  *    因此 debug（无 INTERNET 权限）也能工作，不会崩溃。
  *
- * 结果按 `engine + kind + text` 缓存在内存里（[ConcurrentHashMap]），重复翻译不重复请求；
+ * 另外提供 [translateToEnglish] 给「中文搜索 / 黑名单添加」复用：不含 CJK 直接返回原文（不联网），
+ * 含中文才走上面的第三方在线服务做 zh→en。
+ *
+ * 结果按 `引擎/方向 + kind + text` 缓存在内存里（[ConcurrentHashMap]），重复翻译不重复请求；
  * 缓存只在进程内有效，不落盘。
  */
 object TranslationRepository {
@@ -61,15 +79,52 @@ object TranslationRepository {
     /** ML Kit 失败后的冷却时间：避免每条评论都重新尝试（debug 禁网时尤其重要）。 */
     private const val MLKIT_RETRY_COOLDOWN_MS = 10 * 60 * 1000L
 
-    /** MyMemory 免费接口单次 query 长度有限，太长的评论直接让上层报错。 */
-    private const val MYMEMORY_MAX_CHARS = 900
+    /** MyMemory 免费接口单次查询约 500 字节（UTF-8）上限：按字节切块并留安全余量。 */
+    private const val MYMEMORY_CHUNK_BYTES = 450
+
+    /** LibreTranslate 公共实例单次请求的字符上限：超长文本按块拆分。 */
+    private const val LIBRE_CHUNK_CHARS = 4000
+
+    /** 在线翻译最多处理这么长的文本；再长直接提示改用本地机翻，避免拆成大量请求。 */
+    private const val ONLINE_MAX_CHARS = 12_000
+
+    /** 中文搜索/黑名单方向（zh→en）的缓存键标记，与评论/标签的 en→zh 缓存区分开。 */
+    private const val DIRECTION_TO_EN = "online-en"
+
+    /**
+     * 备用服务 LibreTranslate 公共实例列表。
+     *
+     * 公共实例经常限流/停用/需要 API Key；任何一个失败都静默尝试下一个，
+     * 全部失败才把错误拼进 [TranslationUnavailableException]。
+     * 顺序按“实测可用性”排列：`translate.hostux.net` 是目前可匿名 POST 的公开镜像，
+     * 官方实例（libretranslate.com / de.*）现在要求 API Key，只作为兜底尝试。
+     */
+    private val LIBRE_ENDPOINTS = listOf(
+        "https://translate.hostux.net/translate",
+        "https://libretranslate.com/translate",
+        "https://de.libretranslate.com/translate",
+        "https://translate.terraprint.co/translate",
+        "https://translate.fedilab.app/translate",
+    )
+
+    private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
     private val cache = ConcurrentHashMap<String, String>()
 
+    /** 主服务（MyMemory）用常规超时。 */
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** 备用服务用短超时：公共实例经常不可用，不能让备用链路把 UI 拖太久。 */
+    private val libreHttp: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
             .build()
     }
 
@@ -243,9 +298,12 @@ object TranslationRepository {
     /**
      * 翻译单段文本。
      *
+     * 在线引擎 = 第三方公开翻译服务（MyMemory 主、LibreTranslate 备），不再使用 Google；
+     * 本地引擎 = 内置词典 / ML Kit 设备端翻译。
+     *
      * @throws NetworkLockedException debug 构建下选择在线引擎时（开发期网络锁）。
      * @throws OfflineModeException 单机模式下选择在线引擎时。
-     * @throws IOException 在线引擎主备接口都失败时。
+     * @throws TranslationUnavailableException 在线引擎主备服务都失败时（消息可直接展示）。
      */
     suspend fun translate(
         context: Context,
@@ -271,12 +329,43 @@ object TranslationRepository {
 
         val result = when (engine) {
             Config.TRANSLATION_LOCAL -> translateLocal(appContext, cfg, trimmed, kind)
-            else -> translateOnline(cfg, trimmed)
+            else -> translateOnline(cfg, trimmed, source = "en", target = "zh")
         }
-        if (result.isNotBlank()) {
-            if (cache.size >= CACHE_LIMIT) cache.clear()
-            cache[key] = result
+        if (result.isNotBlank()) putCache(key, result)
+        return result
+    }
+
+    /**
+     * 中文 → 英文（供「中文搜索 / 黑名单添加」等场景复用）。
+     *
+     * 规则：
+     *  - 输入 trim 后为空 → 返回空串；
+     *  - **不含 CJK 统一表意文字** → 直接返回 trim 后的原文，不联网；
+     *  - 含中文 → 走第三方在线翻译 zh→en（MyMemory 主、LibreTranslate 备），结果 trim；
+     *  - 在线翻译需要联网：单机模式抛 [OfflineModeException]，debug 构建抛 [NetworkLockedException]，
+     *    主备服务都失败抛 [TranslationUnavailableException]（消息可直接展示给用户）；
+     *  - 结果按输入文本缓存在内存，重复调用不重复请求。
+     *
+     * @param context 与 [translate] 保持同一套签名，方便调用方统一传 Context（当前实现不需要资源）。
+     */
+    @Suppress("UNUSED_PARAMETER")
+    suspend fun translateToEnglish(context: Context, cfg: Config, text: String): String {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return trimmed
+        // 纯英文/数字直接返回，绝不为了"判断语言"联网。
+        if (!containsCjk(trimmed)) return trimmed
+        NetworkGate.require(cfg.mode)
+        val key = cacheKey(DIRECTION_TO_EN, TranslationKind.TAG, trimmed)
+        cache[key]?.let { return it }
+        val result = translateOnline(cfg, trimmed, source = "zh", target = "en").trim()
+        // 部分公共实例对中文支持很差（可能返回 "?"、空串或原文）：这种结果不能拿去当
+        // 英文关键词搜索/加黑名单，按失败处理并给可读提示，让调用方回退到原文。
+        if (result.none { it in 'A'..'Z' || it in 'a'..'z' }) {
+            throw TranslationUnavailableException(
+                "在线翻译没有返回可用的英文结果，请稍后重试或换一个关键词。",
+            )
         }
+        if (result.isNotBlank()) putCache(key, result)
         return result
     }
 
@@ -326,81 +415,141 @@ object TranslationRepository {
             }
         }
 
-    // ------------------------------------------------------------- 在线引擎
+    // ------------------------------------------------------------- 在线引擎（第三方公开服务）
 
     /**
-     * 在线翻译：google translate 公共端点 → 失败回退 MyMemory。
-     * 这里不再重复调用门禁（[translate] 已调用），只负责 HTTP + 解析。
+     * 在线翻译：MyMemory 主服务 → 失败时**静默回退** LibreTranslate 公共实例。
+     *
+     * 网络门禁已由 [translate] / [translateToEnglish] 在发请求前统一通过，
+     * 这里只负责 HTTP + 解析 + 主备切换，绝不绕过 NetGuard / NetworkGate。
+     *
+     * @param source 源语言代码（`en` 或 `zh`）
+     * @param target 目标语言代码（`zh` 或 `en`）
      */
-    private suspend fun translateOnline(cfg: Config, text: String): String {
-        var googleError: Throwable? = null
+    private suspend fun translateOnline(
+        cfg: Config,
+        text: String,
+        source: String,
+        target: String,
+    ): String {
+        if (text.length > ONLINE_MAX_CHARS) {
+            throw TranslationUnavailableException(
+                "文本过长（${text.length} 字符），在线翻译暂不支持，请改用本地机翻。",
+            )
+        }
+        val failures = ArrayList<String>(2)
         try {
-            return googleTranslate(cfg, text)
+            return myMemoryTranslate(cfg, text, source, target)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            googleError = e
+            failures += "MyMemory ${describeFailure(e)}"
         }
         try {
-            return myMemoryTranslate(cfg, text)
+            return libreTranslate(cfg, text, source, target)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            val message = e.message ?: googleError?.message ?: "翻译服务不可用"
-            throw IOException("在线翻译失败：$message")
+            failures += "LibreTranslate ${describeFailure(e)}"
         }
+        throw TranslationUnavailableException(
+            "在线翻译服务暂时不可用（${failures.joinToString("；")}），请稍后重试或改用本地机翻。",
+        )
     }
 
-    /** 主接口：`translate_a/single`，解析嵌套数组，把各段译文拼起来。 */
-    private suspend fun googleTranslate(cfg: Config, text: String): String {
-        val url = HttpUrl.Builder()
-            .scheme("https")
-            .host("translate.googleapis.com")
-            .addPathSegments("translate_a/single")
-            .addQueryParameter("client", "gtx")
-            .addQueryParameter("sl", "auto")
-            .addQueryParameter("tl", "zh-CN")
-            .addQueryParameter("dt", "t")
-            .addQueryParameter("q", text)
-            .build()
-        val body = httpGetText(url, cfg)
-        val root = JSONArray(body)
-        val segments = root.optJSONArray(0) ?: throw IOException("谷歌翻译返回格式无法解析")
-        val out = StringBuilder()
-        for (i in 0 until segments.length()) {
-            val segment = segments.optJSONArray(i) ?: continue
-            val piece = segment.optString(0)
-            if (piece.isNotBlank()) out.append(piece)
+    /** 主服务：MyMemory 免费接口，解析 `responseData.translatedText`。 */
+    private suspend fun myMemoryTranslate(
+        cfg: Config,
+        text: String,
+        source: String,
+        target: String,
+    ): String {
+        val langpair = myMemoryLangPair(source, target)
+        val chunks = chunkByWords(text, MYMEMORY_CHUNK_BYTES, ::utf8ByteLength)
+        val pieces = ArrayList<String>(chunks.size)
+        for (chunk in chunks) {
+            pieces += myMemoryTranslateChunk(cfg, chunk, langpair)
         }
-        val translated = out.toString().trim()
-        if (translated.isEmpty()) throw IOException("谷歌翻译返回空结果")
-        return translated
+        return pieces.joinToString(" ").trim()
     }
 
-    /** 备接口：MyMemory，解析 `responseData.translatedText`。 */
-    private suspend fun myMemoryTranslate(cfg: Config, text: String): String {
-        if (text.length > MYMEMORY_MAX_CHARS) {
-            throw IOException("评论过长，备用翻译接口不支持")
-        }
+    /** 语言对：MyMemory 的中文代码是 `zh-CN`。 */
+    private fun myMemoryLangPair(source: String, target: String): String = when {
+        source == "zh" -> "zh-CN|$target"
+        target == "zh" -> "$source|zh-CN"
+        else -> "$source|$target"
+    }
+
+    private suspend fun myMemoryTranslateChunk(cfg: Config, text: String, langpair: String): String {
         val url = HttpUrl.Builder()
             .scheme("https")
             .host("api.mymemory.translated.net")
             .addPathSegment("get")
             .addQueryParameter("q", text)
-            .addQueryParameter("langpair", "en|zh-CN")
+            .addQueryParameter("langpair", langpair)
             .build()
         val body = httpGetText(url, cfg)
         val root = JSONObject(body)
         val status = root.optInt("responseStatus", 200)
+        if (status != 200) {
+            throw IOException("状态异常（$status）")
+        }
         val data = root.optJSONObject("responseData")
-            ?: throw IOException("MyMemory 返回格式无法解析")
-        val raw = data.optString("translatedText")
-        if (raw.isBlank()) throw IOException("MyMemory 返回空译文")
-        if (status != 200) throw IOException("MyMemory 状态异常（$status）")
+            ?: throw IOException("返回格式无法解析")
+        val raw = data.optString("translatedText").trim()
+        if (raw.isEmpty() || raw == "null") throw IOException("返回空译文")
         if (raw.uppercase().startsWith("MYMEMORY WARNING")) {
-            throw IOException("MyMemory 免费额度已用完")
+            throw IOException("免费额度已用完")
         }
         return decodeHtmlEntities(raw).trim()
+    }
+
+    /** 备用服务：LibreTranslate 公共实例（POST JSON），逐个实例尝试到成功为止。 */
+    private suspend fun libreTranslate(
+        cfg: Config,
+        text: String,
+        source: String,
+        target: String,
+    ): String {
+        val chunks = chunkByWords(text, LIBRE_CHUNK_CHARS) { it.length }
+        val pieces = ArrayList<String>(chunks.size)
+        for (chunk in chunks) {
+            pieces += libreTranslateChunk(cfg, chunk, source, target)
+        }
+        return pieces.joinToString(" ").trim()
+    }
+
+    private suspend fun libreTranslateChunk(
+        cfg: Config,
+        text: String,
+        source: String,
+        target: String,
+    ): String {
+        val payload = JSONObject().apply {
+            put("q", text)
+            put("source", source)
+            put("target", target)
+            put("format", "text")
+        }.toString()
+        var lastFailure: Throwable? = null
+        for (endpoint in LIBRE_ENDPOINTS) {
+            try {
+                val body = httpPostJson(endpoint, payload, cfg)
+                val root = JSONObject(body)
+                val error = root.optString("error")
+                if (error.isNotBlank() && error != "null") {
+                    throw IOException("服务返回错误")
+                }
+                val raw = root.optString("translatedText").trim()
+                if (raw.isEmpty() || raw == "null") throw IOException("返回空译文")
+                return decodeHtmlEntities(raw).trim()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                lastFailure = e
+            }
+        }
+        throw lastFailure ?: IOException("公共实例不可用")
     }
 
     private suspend fun httpGetText(url: HttpUrl, cfg: Config): String = withContext(Dispatchers.IO) {
@@ -419,6 +568,24 @@ object TranslationRepository {
         }
     }
 
+    private suspend fun httpPostJson(endpoint: String, payload: String, cfg: Config): String =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(endpoint)
+                .header("Accept", "application/json")
+                .header("User-Agent", userAgent(cfg))
+                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            libreHttp.newCall(request).execute().use { resp ->
+                val body = resp.body.string()
+                if (!resp.isSuccessful) {
+                    throw ApiException(resp.code, "翻译服务返回 HTTP ${resp.code}")
+                }
+                if (body.isBlank()) throw IOException("翻译服务返回空响应")
+                body
+            }
+        }
+
     private fun userAgent(cfg: Config): String =
         if (cfg.loggedIn) {
             "E6DL/${BuildConfig.VERSION_NAME} (by ${cfg.username} on e621)"
@@ -433,6 +600,11 @@ object TranslationRepository {
 
     private fun cacheKey(engine: String, kind: TranslationKind, text: String): String =
         "$engine|${kind.name}|$text"
+
+    private fun putCache(key: String, value: String) {
+        if (cache.size >= CACHE_LIMIT) cache.clear()
+        cache[key] = value
+    }
 
     /** 已经以中文为主时不再翻译（评论翻译 / 在线路径都省一次请求）。 */
     private fun isMostlyChinese(text: String): Boolean {
@@ -459,4 +631,80 @@ object TranslationRepository {
             .replace("&amp;", "&")
             .replace("&nbsp;", " ")
     }
+
+    /** 把异常转成短描述拼进可读错误里（不向用户泄露原始响应体）。 */
+    private fun describeFailure(e: Throwable): String = when (e) {
+        is ApiException -> if (e.code == 429) "免费额度已用完" else "HTTP ${e.code}"
+        is SocketTimeoutException -> "请求超时"
+        else -> e.message?.trim()?.take(40)?.takeIf { it.isNotEmpty() } ?: "请求失败"
+    }
+}
+
+// ---------------------------------------------------------------- 文件级纯函数工具
+
+/** 文本里是否含中日韩统一表意文字（判断"已经是中文 / 需要中→英"用）。 */
+private fun containsCjk(text: String): Boolean = text.any { ch ->
+    val code = ch.code
+    code in 0x4E00..0x9FFF || code in 0x3400..0x4DBF || code in 0xF900..0xFAFF
+}
+
+/** 文本的 UTF-8 字节数（MyMemory 的 `q` 长度上限按字节算）。 */
+private fun utf8ByteLength(text: String): Int = text.toByteArray(Charsets.UTF_8).size
+
+private val TRANSLATION_WHITESPACE = Regex("\\s+")
+
+/**
+ * 按空白把长文本切成若干块（尽量保持词/句子完整），让在线接口的逐块请求都不超长度上限。
+ * [measure] 返回一段文本的长度（MyMemory 用 UTF-8 字节数，LibreTranslate 用字符数）。
+ */
+private fun chunkByWords(text: String, limit: Int, measure: (String) -> Int): List<String> {
+    if (limit <= 0 || measure(text) <= limit) return listOf(text)
+    val chunks = ArrayList<String>(2)
+    val current = StringBuilder()
+    var currentSize = 0
+
+    fun flush() {
+        if (current.isEmpty()) return
+        chunks.add(current.toString())
+        current.setLength(0)
+        currentSize = 0
+    }
+
+    for (token in text.split(TRANSLATION_WHITESPACE)) {
+        if (token.isEmpty()) continue
+        val tokenSize = measure(token)
+        if (tokenSize > limit) {
+            // 单个超长词：按字符硬切，保证一定能装进上限。
+            flush()
+            var start = 0
+            while (start < token.length) {
+                var end = start
+                var budget = 0
+                while (end < token.length) {
+                    val cp = token.codePointAt(end)
+                    val step = Character.charCount(cp)
+                    val pieceSize = measure(token.substring(end, end + step))
+                    if (budget + pieceSize > limit) break
+                    budget += pieceSize
+                    end += step
+                }
+                if (end == start) end = start + 1
+                chunks.add(token.substring(start, end))
+                start = end
+            }
+            continue
+        }
+        val separator = if (current.isEmpty()) 0 else 1
+        if (currentSize + separator + tokenSize > limit) {
+            flush()
+            current.append(token)
+            currentSize = tokenSize
+        } else {
+            if (current.isNotEmpty()) current.append(' ')
+            current.append(token)
+            currentSize += separator + tokenSize
+        }
+    }
+    flush()
+    return chunks.ifEmpty { listOf(text) }
 }

@@ -36,6 +36,7 @@ object ConfigJson {
         })
         put("ui", JSONObject().put("theme", cfg.theme).put("keyword_memory", cfg.keywordMemory))
         put("recent_keywords", JSONArray(cfg.recentKeywords))
+        put("skipped_update_tag", cfg.skippedUpdateTag)
     }.toString()
 
     /**
@@ -69,6 +70,7 @@ object ConfigJson {
                 blacklist = o.optJSONArray("blacklist").toStringList(),
                 history = o.optJSONArray("history").toHistory(),
                 recentKeywords = o.optJSONArray("recent_keywords").toStringList(),
+                skippedUpdateTag = o.optString("skipped_update_tag", ""),
             )
         } catch (e: Exception) {
             Config(apiKey = apiKey)

@@ -1,7 +1,10 @@
 package com.mikesteve.e621downloadler.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -9,11 +12,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +28,7 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.adaptive.layout.AnimatedPane
@@ -46,14 +52,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.window.core.layout.WindowSizeClass
+import com.mikesteve.e621downloadler.BuildConfig
 import com.mikesteve.e621downloadler.R
+import com.mikesteve.e621downloadler.data.Config
 import com.mikesteve.e621downloadler.data.Post
+import com.mikesteve.e621downloadler.net.AppUpdateInfo
+import com.mikesteve.e621downloadler.net.UpdateChecker
 import com.mikesteve.e621downloadler.ui.components.EmptyState
 import com.mikesteve.e621downloadler.ui.pages.BlacklistPage
+import com.mikesteve.e621downloadler.ui.pages.BrowsePage
 import com.mikesteve.e621downloadler.ui.pages.DetailPage
 import com.mikesteve.e621downloadler.ui.pages.DiscoverPage
 import com.mikesteve.e621downloadler.ui.pages.FavoritesPage
@@ -64,7 +76,7 @@ import kotlinx.coroutines.launch
 
 private enum class Destination(val labelRes: Int, val icon: ImageVector) {
     Discover(R.string.e6dl_tab_discover, Icons.Filled.Whatshot),
-    Search(R.string.e6dl_tab_search, Icons.Filled.Search),
+    Search(R.string.e6dl_tab_search, Icons.Filled.Download),
     Favorites(R.string.e6dl_tab_favorites, Icons.Filled.Favorite),
     Blacklist(R.string.e6dl_tab_blacklist, Icons.Filled.Block),
     Settings(R.string.e6dl_tab_settings, Icons.Filled.Settings),
@@ -90,6 +102,7 @@ fun E6DLApp() {
     // 配置是否已从 DataStore 读出：未读出前 config 只是默认占位值（单机），不能先组合页面。
     val configLoaded by vm.configLoaded.collectAsState()
     val selectedPost by vm.selectedPost.collectAsState()
+    val browse by vm.browse.collectAsState()
 
     var destinationName by rememberSaveable { mutableStateOf(Destination.Discover.name) }
     val destination = Destination.valueOf(destinationName)
@@ -97,6 +110,15 @@ fun E6DLApp() {
     // 详情页点标签 → 切到「搜索下载」并把标签预填进关键词框。
     // 搜索页消费后必须置空，否则每次进搜索页都会被旧标签覆盖用户输入。
     var searchPrefill by rememberSaveable { mutableStateOf<String?>(null) }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    val context = LocalContext.current
+    // v1.5.0：启动自检更新（release + 在线模式；debug/单机跳过，静默失败不打扰用户）
+    LaunchedEffect(configLoaded, cfg.mode) {
+        if (!configLoaded || BuildConfig.DEBUG) return@LaunchedEffect
+        if (cfg.mode != Config.MODE_ONLINE) return@LaunchedEffect
+        val info = runCatching { UpdateChecker.checkLatest(cfg) }.getOrNull() ?: return@LaunchedEffect
+        if (info.tagName != cfg.skippedUpdateTag) updateInfo = info
+    }
 
     val adaptiveInfo = currentWindowAdaptiveInfoV2()
     val sizeClass = adaptiveInfo.windowSizeClass
@@ -106,7 +128,7 @@ fun E6DLApp() {
 
     // 只有「发现 / 收藏」两个页面需要 List-Detail 双栏；搜索/黑名单/设置是整页表单，
     // 直接用整页布局（见下方 Row 分支），避免右侧详情占位把内容挤到一半宽。
-    val listDetailEnabled = destination == Destination.Discover || destination == Destination.Favorites
+    val listDetailEnabled = browse.active || destination == Destination.Discover || destination == Destination.Favorites
 
     val directive = remember(adaptiveInfo, hasSeparatingVerticalHinge) {
         val base = if (hasSeparatingVerticalHinge) {
@@ -202,16 +224,21 @@ fun E6DLApp() {
         // 打开详情时把「当前列表页」的作品一起交给 ViewModel：详情页据此支持左右滑动
         // 切换上一个/下一个作品。搜索/黑名单/设置这类非列表页没有可滑动上下文，只传当前作品。
         val openDetail: (Post) -> Unit = { post ->
-            val contextPosts = when (destination) {
-                Destination.Discover -> vm.discover.value.posts
-                Destination.Favorites -> vm.favorites.value.posts
-                else -> listOf(post)
+            val contextPosts = if (browse.active) {
+                browse.posts
+            } else {
+                when (destination) {
+                    Destination.Discover -> vm.discover.value.posts
+                    Destination.Favorites -> vm.favorites.value.posts
+                    else -> listOf(post)
+                }
             }
             vm.openDetail(post, contextPosts)
             scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, post.id) }
         }
         val switchDestination: (Destination) -> Unit = { dest ->
             destinationName = dest.name
+            vm.closeBrowse()
             if (navigator.currentDestination?.pane == ListDetailPaneScaffoldRole.Detail) {
                 vm.closeDetail()
                 scope.launch { navigator.navigateBack() }
@@ -242,6 +269,7 @@ fun E6DLApp() {
                         vm = vm,
                         destination = destination,
                         compact = false,
+                        browseActive = browse.active,
                         onSelect = switchDestination,
                         onOpenPost = openDetail,
                         onOpenLogin = { showLogin = true },
@@ -264,6 +292,7 @@ fun E6DLApp() {
                                 vm = vm,
                                 destination = destination,
                                 compact = !useRail,
+                                browseActive = browse.active,
                                 onSelect = switchDestination,
                                 onOpenPost = openDetail,
                                 onOpenLogin = { showLogin = true },
@@ -285,8 +314,14 @@ fun E6DLApp() {
                                     },
                                     onLoginRequired = { showLogin = true },
                                     onSearchTag = { tag ->
-                                        searchPrefill = tag
-                                        switchDestination(Destination.Search)
+                                        vm.closeDetail()
+                                        scope.launch { navigator.navigateBack() }
+                                        vm.openTag(tag)
+                                    },
+                                    onOpenAuthor = { author ->
+                                        vm.closeDetail()
+                                        scope.launch { navigator.navigateBack() }
+                                        vm.openAuthor(author)
                                     },
                                 )
                             } else {
@@ -306,6 +341,42 @@ fun E6DLApp() {
         if (showLogin) {
             LoginDialog(vm = vm, onDismiss = { showLogin = false })
         }
+
+        // 启动更新提示：有新版 → 引导去 GitHub Release 下载页；可跳过此版本。
+        updateInfo?.let { info ->
+            AlertDialog(
+                onDismissRequest = { updateInfo = null },
+                title = { Text(stringResource(R.string.e6dl_update_title, info.versionName)) },
+                text = {
+                    Text(stringResource(R.string.e6dl_update_message))
+                },
+                confirmButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = {
+                                vm.skipUpdateVersion(info.tagName)
+                                updateInfo = null
+                            },
+                        ) { Text(stringResource(R.string.e6dl_update_skip)) }
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(info.releaseUrl)),
+                                    )
+                                }
+                                updateInfo = null
+                            },
+                        ) { Text(stringResource(R.string.e6dl_update_download)) }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { updateInfo = null }) {
+                        Text(stringResource(R.string.e6dl_update_later))
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -315,6 +386,7 @@ private fun ListPane(
     vm: AppViewModel,
     destination: Destination,
     compact: Boolean,
+    browseActive: Boolean,
     onSelect: (Destination) -> Unit,
     onOpenPost: (Post) -> Unit,
     onOpenLogin: () -> Unit,
@@ -322,8 +394,15 @@ private fun ListPane(
     onSearchPrefillConsumed: () -> Unit,
 ) {
     val content: @Composable (Modifier) -> Unit = { innerModifier ->
-        when (destination) {
-            Destination.Discover -> DiscoverPage(vm, onOpenPost = onOpenPost, modifier = innerModifier)
+        if (browseActive) {
+            BrowsePage(vm = vm, onOpenPost = onOpenPost, modifier = innerModifier)
+        } else when (destination) {
+            Destination.Discover -> DiscoverPage(
+                vm,
+                onOpenPost = onOpenPost,
+                onSearch = { query -> vm.searchFromHome(query) },
+                modifier = innerModifier,
+            )
             Destination.Search -> SearchPage(
                 vm,
                 modifier = innerModifier,

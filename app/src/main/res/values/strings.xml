@@ -12,7 +12,7 @@
 
     <!-- ======================= 导航 / 通用动作 ======================= -->
     <string name="e6dl_tab_discover">发现</string>
-    <string name="e6dl_tab_search">搜索下载</string>
+    <string name="e6dl_tab_search">下载</string>
     <string name="e6dl_tab_favorites">我的收藏</string>
     <string name="e6dl_tab_blacklist">黑名单</string>
     <string name="e6dl_tab_settings">设置</string>
@@ -47,7 +47,8 @@
     <string name="e6dl_order_hot">热门</string>
     <string name="e6dl_order_newest">最新</string>
     <string name="e6dl_order_random">随机</string>
-    <string name="e6dl_discover_keyword_hint">关键词过滤（可留空）</string>
+    <string name="e6dl_order_video">视频</string>
+    <string name="e6dl_discover_keyword_hint">搜索</string>
     <string name="e6dl_discover_demo_hint">演示数据：debug 构建启动参数 e6dl_demo=true 时注入，用于离线验证布局。</string>
     <string name="e6dl_discover_guest_blacklist_hint">游客模式下发现页不使用黑名单（与桌面版一致）</string>
     <string name="e6dl_discover_empty_title">暂无推荐内容</string>
@@ -224,7 +225,7 @@
     <string name="e6dl_tags_translate_on">翻译标签</string>
     <string name="e6dl_tags_translate_off">关闭标签翻译</string>
     <string name="e6dl_tags_engine_local">本地机翻：内置词典（离线可用）</string>
-    <string name="e6dl_tags_engine_google">在线谷歌翻译：需联网，失败时自动用内置词典兜底</string>
+    <string name="e6dl_tags_engine_google">在线第三方翻译：需联网，失败时自动用内置词典兜底</string>
     <string name="e6dl_tags_progress">翻译中 %1$d/%2$d</string>
     <string name="e6dl_tags_fallback_local">%1$s 已改用内置词典翻译标签。</string>
     <string name="e6dl_tags_fallback_failed">%1$s 内置词典兜底失败：%2$s</string>
@@ -242,11 +243,52 @@
     <!-- ======================= 设置页翻译卡片（v1.4.0） ======================= -->
     <string name="e6dl_settings_section_translation">翻译</string>
     <string name="e6dl_settings_translation_engine">评论翻译引擎</string>
-    <string name="e6dl_settings_translation_google">在线谷歌翻译</string>
+    <string name="e6dl_settings_translation_google">在线翻译（第三方公开服务）</string>
     <string name="e6dl_settings_translation_local">本地机翻</string>
-    <string name="e6dl_settings_translation_local_desc">本地机翻：评论使用 Google ML Kit 设备端离线模型（需在在线模式首次翻译时下载模型）；标签使用内置词典。无网络、单机模式或模型不可用时自动回退内置词典。</string>
-    <string name="e6dl_settings_translation_google_desc">在线谷歌翻译：调用第三方公开翻译服务，需要连接网络；主接口失败时会回退 MyMemory。单机模式下不可用。</string>
+    <string name="e6dl_settings_translation_local_desc">本地机翻：评论使用设备端离线翻译模型（需在在线模式首次翻译时下载模型）；标签使用内置词典。无网络、单机模式或模型不可用时自动回退内置词典。</string>
+    <string name="e6dl_settings_translation_google_desc">在线翻译：调用第三方公开翻译服务（MyMemory 为主、LibreTranslate 备用），无需密钥；需要联网，失败时会自动回退内置词典。单机模式下不可用。</string>
     <string name="e6dl_settings_translation_net_locked">开发构建网络锁：在线翻译不可用（不会发出任何请求）；离线演示请选择「本地机翻」。</string>
     <string name="e6dl_settings_translate_tags">自动翻译作品标签</string>
     <string name="e6dl_settings_translate_tags_desc">开启后详情页标签按分类分组显示，并在标签下方显示中文译文（首屏最多翻译 80 个，其余保持原文）。</string>
+
+    <!-- ======================= 浏览页文案资源化（v1.5.0） ======================= -->
+    <string name="e6dl_action_download">下载</string>
+    <string name="e6dl_browse_title">浏览</string>
+    <string name="e6dl_browse_count">%1$d 项</string>
+    <string name="e6dl_browse_sort">排序</string>
+    <string name="e6dl_browse_sort_score">评分</string>
+    <string name="e6dl_browse_sort_hot">热度</string>
+    <string name="e6dl_browse_ascending">升序</string>
+    <string name="e6dl_browse_descending">降序</string>
+    <string name="e6dl_browse_empty_title">没有匹配的作品</string>
+    <string name="e6dl_browse_empty_error_title">没有加载到作品</string>
+    <string name="e6dl_browse_empty_desc">换一个关键词/排序，或检查网络与黑名单设置。</string>
+
+    <!-- ======================= 启动更新提示（v1.5.0） ======================= -->
+    <string name="e6dl_update_title">发现新版本 v%1$s</string>
+    <string name="e6dl_update_message">GitHub 已发布新版本。是否前往下载页下载最新版？</string>
+    <string name="e6dl_update_skip">跳过此版本</string>
+    <string name="e6dl_update_download">去下载</string>
+    <string name="e6dl_update_later">以后再说</string>
+
+    <!-- ======================= 下载页预览（v1.5.0） ======================= -->
+    <string name="e6dl_search_keyword_required">请先填写至少一个关键词</string>
+    <string name="e6dl_search_starting">开始下载…</string>
+    <string name="e6dl_search_cancelling">正在取消…</string>
+    <string name="e6dl_search_preview">预览</string>
+    <string name="e6dl_search_preview_title">预览（%1$d）</string>
+    <string name="e6dl_search_preview_empty">没有可显示的缩略图</string>
+
+    <!-- ======================= 黑名单搜索/添加（v1.5.0） ======================= -->
+    <string name="e6dl_blacklist_search_add">搜索 / 添加关键词</string>
+    <string name="e6dl_blacklist_input_label">关键词 / 标签（支持中文）</string>
+    <string name="e6dl_blacklist_input_placeholder">例如：gore、蓝眼睛</string>
+    <string name="e6dl_blacklist_submit">搜索 / 添加</string>
+    <string name="e6dl_blacklist_translating">正在翻译成英文标签…</string>
+    <string name="e6dl_blacklist_translate_failed">翻译失败：没有得到可用的英文标签，请换一个关键词再试。</string>
+    <string name="e6dl_blacklist_will_add">将添加：%1$s</string>
+    <string name="e6dl_blacklist_filter_note">输入内容同时用于过滤下方列表：输入英文直接添加；输入中文会先翻译成英文标签再添加。</string>
+    <string name="e6dl_blacklist_filter_empty_title">没有匹配的黑名单标签</string>
+    <string name="e6dl_blacklist_filter_empty_desc">当前关键词「%1$s」没有匹配项；清空输入可查看全部 %2$d 个标签。</string>
+    <string name="e6dl_blacklist_match_count">匹配 %1$d / %2$d 项</string>
 </resources>

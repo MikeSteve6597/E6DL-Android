@@ -41,8 +41,8 @@ android {
         minSdk = 24
         // 不上架商店，targetSdk 用 36；compileSdk 只影响可调用的 API。
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.4.0"
+        versionCode = 9
+        versionName = "1.5.0"
 
         // 只发 ARMv8（用户要求：只开发 arm64-v8a）
         ndk {

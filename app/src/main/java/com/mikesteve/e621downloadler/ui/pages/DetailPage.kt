@@ -86,6 +86,7 @@ fun DetailPage(
     onBack: () -> Unit,
     onLoginRequired: () -> Unit,
     onSearchTag: (String) -> Unit,
+    onOpenAuthor: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val detailPosts by vm.detailPosts.collectAsState()
@@ -180,6 +181,7 @@ fun DetailPage(
                     wide = wide,
                     onLoginRequired = onLoginRequired,
                     onSearchTag = onSearchTag,
+                    onOpenAuthor = onOpenAuthor,
                 )
             } else {
                 HorizontalPager(
@@ -194,6 +196,7 @@ fun DetailPage(
                         wide = wide,
                         onLoginRequired = onLoginRequired,
                         onSearchTag = onSearchTag,
+                        onOpenAuthor = onOpenAuthor,
                     )
                 }
             }
@@ -214,6 +217,7 @@ private fun DetailPageBody(
     wide: Boolean,
     onLoginRequired: () -> Unit,
     onSearchTag: (String) -> Unit,
+    onOpenAuthor: (String) -> Unit,
 ) {
     val cfg by vm.config.collectAsState()
     val context = LocalContext.current
@@ -293,6 +297,7 @@ private fun DetailPageBody(
                 onDownload = onDownload,
                 onShare = sharePost,
                 onSearchTag = onSearchTag,
+                onOpenAuthor = onOpenAuthor,
             )
         }
     } else {
@@ -316,6 +321,7 @@ private fun DetailPageBody(
                 onDownload = onDownload,
                 onShare = sharePost,
                 onSearchTag = onSearchTag,
+                onOpenAuthor = onOpenAuthor,
             )
         }
     }
@@ -383,6 +389,7 @@ private fun DetailInfo(
     onDownload: (String) -> Unit,
     onShare: () -> Unit,
     onSearchTag: (String) -> Unit,
+    onOpenAuthor: (String) -> Unit,
 ) {
     var downloadMenuOpen by remember(post.id) { mutableStateOf(false) }
 
@@ -417,7 +424,7 @@ private fun DetailInfo(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(MaterialTheme.shapes.medium)
-                    .clickable { onSearchTag(author) }
+                    .clickable { onOpenAuthor(author) }
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),

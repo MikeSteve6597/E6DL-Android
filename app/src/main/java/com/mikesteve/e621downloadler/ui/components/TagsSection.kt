@@ -52,16 +52,21 @@ private const val MAX_TRANSLATE_TAGS = 80
 private const val TRANSLATE_CHUNK = 8
 
 /**
- * 作品标签区块（v1.4.0）。
+ * 作品标签区块（v1.5.0）。
  *
- *  - 按 e621 的分类分组展示：作者 / 版权 / 角色 / 物种 / 通用 / 元信息 / 设定，
+ * 显示契约（**标签永远优先显示**）：
+ *  - 按 e621 的分类分组展示：作者 / 版权 / 角色 / 物种 / 通用 / 元信息 / 设定；
+ *    未列出的扩展分类（未知 key）追加在后面、直接用 key 当分组名，标签照常渲染；
  *    组内用 FlowRow + AssistChip 排列，点击 chip 回调**原 tag** 用于搜索。
+ *  - **原文标签的渲染与翻译状态完全解耦**：关闭翻译、翻译失败、分组为空、在线服务异常
+ *    都只影响“是否显示译文/提示”，绝不会隐藏标签。整个组件只有“作品确实一个标签都没有”
+ *    时才不渲染。
  *  - 标题右侧的翻译开关直接读写配置 `cfg.translateTags`（持久化经 AppViewModel）。
- *  - 开启翻译后分批调用 [TranslationRepository.translateBatch]（kind = TAG），
- *    命中的标签在原文下方追加一行译文，并显示“翻译中 N/M”进度。
- *  - 在线引擎失败（单机模式 / debug 网络锁 / 服务异常）时显示可读错误，
- *    并自动改用内置词典兜底——无网络环境下标签翻译仍然可见（演示可用）。
- *  - 空标签不渲染整个区块。
+ *  - 开启翻译后分批调用 [TranslationRepository.translateBatch]（kind = TAG）：在线引擎为
+ *    第三方公开翻译服务（MyMemory 主、LibreTranslate 备），失败时**逐批静默回退内置词典**，
+ *    已成功的批次保留译文，只显示一条可读提示，不隐藏任何标签。
+ *  - 在线引擎不可用（单机模式 / debug 网络锁 / 服务异常）时显示可读错误并改用内置词典，
+ *    无网络环境下标签翻译仍然可见（演示可用）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -86,6 +91,7 @@ fun TagsSection(
     var notice by remember(post.id) { mutableStateOf<String?>(null) }
 
     // 关闭翻译 / 切换引擎 / 切换运行模式时清空旧译文并重新翻译。
+    // 这里只是“译文”的副作用：即使整段逻辑异常，下面的原文标签也照常渲染。
     LaunchedEffect(post.id, cfg.translateTags, cfg.translationEngine, cfg.mode) {
         translations = emptyMap()
         translating = false
@@ -99,42 +105,31 @@ fun TagsSection(
         if (tags.isEmpty()) return@LaunchedEffect
 
         translating = true
+        var fallbackFrom: Throwable? = null
         try {
-            translations = translateInChunks(context, cfg, tags) { done ->
-                doneCount = done
-            }
+            translations = translateInChunks(
+                context = context,
+                cfg = cfg,
+                tags = tags,
+                onProgress = { done -> doneCount = done },
+                onFallback = { failure -> if (fallbackFrom == null) fallbackFrom = failure },
+            )
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            val readable = friendlyMessage(e)
-            if (cfg.translationEngine == Config.TRANSLATION_GOOGLE) {
-                // 在线引擎不可用（单机 / debug 网络锁 / 服务异常）→ 内置词典兜底，
-                // 保证离线演示与弱网环境下标签翻译仍然有效。
-                try {
-                    translations = translateInChunks(
-                        context = context,
-                        cfg = cfg.copy(translationEngine = Config.TRANSLATION_LOCAL),
-                        tags = tags,
-                    ) { done -> doneCount = done }
-                    notice = context.getString(R.string.e6dl_tags_fallback_local, readable)
-                } catch (e2: CancellationException) {
-                    throw e2
-                } catch (e2: Exception) {
-                    notice = context.getString(
-                        R.string.e6dl_tags_fallback_failed,
-                        readable,
-                        friendlyMessage(e2),
-                    )
-                }
-            } else {
-                notice = readable
-            }
+        } catch (e: Throwable) {
+            // 兜底兜出意外也只提示：标签原文照常显示，绝不因此隐藏整个区块。
+            notice = friendlyMessage(e)
         } finally {
             translating = false
         }
+        val fallback = fallbackFrom
+        if (fallback != null && notice == null) {
+            notice = context.getString(R.string.e6dl_tags_fallback_local, friendlyMessage(fallback))
+        }
     }
 
-    // 空标签不渲染整个区块（所有 remember / LaunchedEffect 已提前声明，避免条件调用 Compose 钩子）。
+    // 唯一允许的隐藏：作品确实没有任何标签。翻译开关 / 译文 / 翻译异常都不参与这个判断，
+    // 因此“翻译关闭、翻译失败、分组为空、扩展分类（未知 key）”都不会让原文标签消失。
     if (groups.isEmpty()) return
 
     Column(
@@ -172,6 +167,7 @@ fun TagsSection(
                 text = if (cfg.translationEngine == Config.TRANSLATION_LOCAL) {
                     stringResource(R.string.e6dl_tags_engine_local)
                 } else {
+                    // 在线引擎为第三方公开翻译服务（MyMemory 主、LibreTranslate 备），不再使用 Google。
                     stringResource(R.string.e6dl_tags_engine_google)
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -193,6 +189,7 @@ fun TagsSection(
                     )
                 }
             }
+            // 失败/回退只提示，不影响下面标签的渲染。
             InfoBar(message = notice, type = InfoType.Warning)
             if (!translating && totalCount > 0 && totalTags > MAX_TRANSLATE_TAGS) {
                 Text(
@@ -207,6 +204,7 @@ fun TagsSection(
             }
         }
 
+        // 标签渲染（无条件）：译文命中时 chip 显示两行，否则只显示原文。
         groups.forEach { (category, tags) ->
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val label = groupLabelRes(category)
@@ -296,6 +294,8 @@ private fun groupLabelRes(category: String): Int? = when (category) {
 /**
  * 按分类整理标签：先按 [GROUP_ORDER] 固定顺序，未列出的分类追加在后面；
  * 总数超过 [max] 时按顺序截断（与详情页原来 take(120) 的行为一致）。
+ *
+ * 注意：这里只过滤**空白标签**；未知分类（e621 以后新增的 key）会保留并照常渲染。
  */
 private fun visibleGroups(post: Post, max: Int): List<Pair<String, List<String>>> {
     val ordered = LinkedHashSet<String>()
@@ -320,24 +320,53 @@ private fun visibleGroups(post: Post, max: Int): List<Pair<String, List<String>>
 
 /**
  * 分批翻译标签（每批 [TRANSLATE_CHUNK] 个），每完成一批回调一次进度。
- * 结果：tag → 译文；未命中词典时仓库返回原文，渲染层会跳过重复译文。
+ *
+ * - 在线引擎失败时**逐批静默回退内置词典**：已成功批次的译文保留，未成功的批次用词典兜底，
+ *   并通过 [onFallback] 把首个异常交给调用方展示提示；
+ * - 结果：tag → 译文；未命中词典时仓库返回原文，渲染层会跳过重复译文；
+ * - 任何情况下都返回“能显示的部分”，不会因为翻译失败让调用方拿不到原文标签。
  */
 private suspend fun translateInChunks(
     context: Context,
     cfg: Config,
     tags: List<String>,
     onProgress: (Int) -> Unit,
+    onFallback: ((Throwable) -> Unit)? = null,
 ): Map<String, String> {
     val result = LinkedHashMap<String, String>(tags.size)
     var done = 0
     for (chunk in tags.chunked(TRANSLATE_CHUNK)) {
-        val batch = TranslationRepository.translateBatch(context, cfg, chunk, TranslationKind.TAG)
-        chunk.forEachIndexed { index, tag ->
-            val translated = batch.getOrNull(index)?.trim().orEmpty()
-            if (translated.isNotEmpty()) result[tag] = translated
+        try {
+            val batch = TranslationRepository.translateBatch(context, cfg, chunk, TranslationKind.TAG)
+            mergeTranslations(chunk, batch, result)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 在线引擎不可用（单机 / debug 网络锁 / 第三方服务异常）→ 本批用内置词典兜底。
+            onFallback?.invoke(e)
+            val fallbackCfg = cfg.copy(translationEngine = Config.TRANSLATION_LOCAL)
+            val batch = TranslationRepository.translateBatch(
+                context = context,
+                cfg = fallbackCfg,
+                texts = chunk,
+                kind = TranslationKind.TAG,
+            )
+            mergeTranslations(chunk, batch, result)
         }
         done += chunk.size
         onProgress(done)
     }
     return result
+}
+
+/** 按 tag 顺序把一批译文并入结果表；空白译文（未命中）直接跳过。 */
+private fun mergeTranslations(
+    chunk: List<String>,
+    batch: List<String>,
+    out: MutableMap<String, String>,
+) {
+    chunk.forEachIndexed { index, tag ->
+        val translated = batch.getOrNull(index)?.trim().orEmpty()
+        if (translated.isNotEmpty()) out[tag] = translated
+    }
 }

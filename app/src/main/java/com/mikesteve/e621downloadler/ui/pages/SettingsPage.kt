@@ -179,6 +179,8 @@ fun SettingsPage(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
+                    // 常量名沿用 TRANSLATION_GOOGLE 只为兼容已保存配置；展示上不再提 Google，
+                    // 实际调用的是第三方公开翻译服务（MyMemory 主、LibreTranslate 备）。
                     selected = cfg.translationEngine == Config.TRANSLATION_GOOGLE,
                     onClick = { vm.setTranslationEngine(Config.TRANSLATION_GOOGLE) },
                     label = { Text(stringResource(R.string.e6dl_settings_translation_google)) },
@@ -191,8 +193,10 @@ fun SettingsPage(
             }
             Text(
                 text = if (cfg.translationEngine == Config.TRANSLATION_LOCAL) {
+                    // 本地机翻完全保留：评论走设备端离线模型，标签查内置词典，均不需要在线翻译。
                     stringResource(R.string.e6dl_settings_translation_local_desc)
                 } else {
+                    // 在线引擎为第三方公开翻译服务，不再使用 Google 翻译端点。
                     stringResource(R.string.e6dl_settings_translation_google_desc)
                 },
                 style = MaterialTheme.typography.bodySmall,

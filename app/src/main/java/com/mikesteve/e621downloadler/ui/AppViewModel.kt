@@ -13,6 +13,7 @@ import com.mikesteve.e621downloadler.data.Quality
 import com.mikesteve.e621downloadler.download.DownloadEngine
 import com.mikesteve.e621downloadler.download.DownloadProgress
 import com.mikesteve.e621downloadler.net.ApiClient
+import com.mikesteve.e621downloadler.net.TranslationRepository
 import com.mikesteve.e621downloadler.net.friendlyMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -131,16 +132,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val page = if (reset) 1 else _discover.value.posts.size / PAGE_LIMIT + 1
                 val batch = api.fetchPosts(
                     cfg = cfg,
-                    tags = tags,
+                    tags = if (order == ORDER_VIDEO) listOf(ORDER_VIDEO, ORDER_SCORE) else tags,
                     blacklist = blacklist,
                     limit = PAGE_LIMIT,
                     page = page,
                 )
+                // v1.5.0：没有缩略图/文件地址（内容不可见）的作品整卡隐藏；demo 数据例外。
+                val visibleBatch = if (DebugFlags.demo) batch else batch.filter { it.hasVisibleCard }
                 _discover.update { cur ->
                     if (cur.order != order || cur.keyword != keyword) {
                         cur // 过期响应（用户已换排序/关键词）
                     } else {
-                        val merged = if (reset) batch else (cur.posts + batch).distinctBy { it.id }
+                        val merged = if (reset) visibleBatch else (cur.posts + visibleBatch).distinctBy { it.id }
                         cur.copy(
                             posts = merged,
                             loading = false,
@@ -226,6 +229,178 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------------------------------------ 浏览页（搜索结果 / 作者页 / 标签页）
+    //
+    // v1.5.0：首页搜索、作者页、标签页共用同一个作品浏览页（与发现页同卡片/同批量/同分页），
+    // 只是查询条件不同。排序用 e621 的 order:score / order:score_asc / order:hot / order:hot_asc。
+    // 黑名单（D10）在查询时通过 -tag 排除；无缩略图的不可见作品（需求 2）在结果里过滤掉。
+
+    data class BrowseState(
+        val active: Boolean = false,
+        val title: String = "",
+        val query: String = "",
+        val sort: String = BROWSE_SORT_SCORE,
+        val ascending: Boolean = false,
+        val posts: List<Post> = emptyList(),
+        val loading: Boolean = false,
+        val reachedEnd: Boolean = false,
+        val error: String? = null,
+    )
+
+    private val _browse = MutableStateFlow(BrowseState())
+    val browse: StateFlow<BrowseState> = _browse
+    private var browseJob: Job? = null
+
+    /** 打开通用浏览页（搜索结果 / 作者作品 / 标签作品）。 */
+    fun openBrowse(
+        title: String,
+        query: String,
+        sort: String = BROWSE_SORT_SCORE,
+        ascending: Boolean = false,
+    ) {
+        browseJob?.cancel()
+        browseJob = null
+        // debug 演示数据：离线也能看到浏览页卡片（搜索/作者/标签页共用）。
+        if (DebugFlags.demo) {
+            val all = _discover.value.posts
+            val posts = if (query.contains(ORDER_VIDEO) || title.contains("视频")) {
+                all.filter { it.isVideo }
+            } else {
+                all
+            }
+            _browse.value = BrowseState(
+                active = true,
+                title = title,
+                query = query,
+                sort = sort,
+                ascending = ascending,
+                posts = posts,
+                loading = false,
+                reachedEnd = true,
+            )
+            return
+        }
+        _browse.value = BrowseState(
+            active = true,
+            title = title,
+            query = query,
+            sort = sort,
+            ascending = ascending,
+        )
+        loadBrowse(reset = true)
+    }
+
+    fun closeBrowse() {
+        browseJob?.cancel()
+        browseJob = null
+        _browse.value = BrowseState()
+    }
+
+    fun setBrowseSort(sort: String, ascending: Boolean) {
+        val cur = _browse.value
+        if (!cur.active) return
+        if (cur.sort == sort && cur.ascending == ascending) return
+        _browse.update { it.copy(sort = sort, ascending = ascending) }
+        loadBrowse(reset = true)
+    }
+
+    /**
+     * 首页搜索：中文先经第三方翻译库转英文标签，再进入搜索结果页（D4/D8）。
+     * 翻译失败时按原文搜索，不阻塞用户。
+     */
+    fun searchFromHome(raw: String) {
+        val input = raw.trim()
+        if (input.isEmpty()) return
+        viewModelScope.launch {
+            val cfg = config.value
+            val translated = try {
+                TranslationRepository.translateToEnglish(getApplication(), cfg, input)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                input
+            }
+            openBrowse(title = "搜索结果：$translated", query = translated)
+        }
+    }
+
+    /** 作者页（W1）：点击作者后进入，查询用 artist 标签（没有 artist 时用 uploader 名）。 */
+    fun openAuthor(author: String) {
+        val name = author.trim()
+        if (name.isEmpty()) return
+        openBrowse(title = "作者：$name", query = name)
+    }
+
+    /** 标签页（C1）：点击标签后进入，不再跳下载搜索框。 */
+    fun openTag(tag: String) {
+        val t = tag.trim()
+        if (t.isEmpty()) return
+        openBrowse(title = "标签：#$t", query = t)
+    }
+
+    fun loadBrowse(reset: Boolean = false) {
+        val snapshot = _browse.value
+        if (!snapshot.active) return
+        if (DebugFlags.demo) {
+            _browse.update { it.copy(loading = false, error = null, reachedEnd = true) }
+            return
+        }
+        if (!reset && (snapshot.loading || snapshot.reachedEnd)) return
+        if (reset) {
+            browseJob?.cancel()
+            browseJob = null
+            _browse.update { it.copy(posts = emptyList(), loading = true, reachedEnd = false, error = null) }
+        } else {
+            _browse.update { it.copy(loading = true, error = null) }
+        }
+
+        val title = snapshot.title
+        val query = snapshot.query
+        val sort = snapshot.sort
+        val ascending = snapshot.ascending
+        val orderTag = when (sort) {
+            BROWSE_SORT_HOT -> if (ascending) "order:hot_asc" else "order:hot"
+            else -> if (ascending) "order:score_asc" else "order:score"
+        }
+        val tags = buildList {
+            add(orderTag)
+            addAll(query.split(',', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() })
+        }
+        val page = if (reset) 1 else snapshot.posts.size / PAGE_LIMIT + 1
+        browseJob = viewModelScope.launch {
+            try {
+                val cfg = config.value
+                val batch = api.fetchPosts(
+                    cfg = cfg,
+                    tags = tags,
+                    blacklist = cfg.blacklist,
+                    limit = PAGE_LIMIT,
+                    page = page,
+                )
+                val visibleBatch = if (DebugFlags.demo) batch else batch.filter { it.hasVisibleCard }
+                _browse.update { cur ->
+                    if (!cur.active || cur.query != query || cur.title != title ||
+                        cur.sort != sort || cur.ascending != ascending
+                    ) {
+                        cur // 过期响应
+                    } else {
+                        val merged = if (reset) visibleBatch else (cur.posts + visibleBatch).distinctBy { it.id }
+                        cur.copy(
+                            posts = merged,
+                            loading = false,
+                            reachedEnd = batch.size < PAGE_LIMIT,
+                            error = null,
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _browse.update { it.copy(loading = false, error = friendlyMessage(e)) }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ 收藏页
 
     data class FavoritesState(
@@ -283,6 +458,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // 与桌面版一致：收藏页也按黑名单过滤，并且标记为已收藏
                 val visible = all
                     .filterNot { post -> post.tagsFlat.any { tag -> tag in cfg.blacklist } }
+                    .filter { post -> DebugFlags.demo || post.hasVisibleCard }
                     .map { it.copy(isFavorited = true) }
                 // 刷新后保留仍存在的选中项，避免"已选 N 项"里混入已被取消收藏的作品
                 val visibleIds = visible.map { post -> post.id }.toSet()
@@ -437,6 +613,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // 详情页左右滑动列表里的同一作品也要同步（收藏状态/收藏数变化后翻回去仍是新数据）
         _detailPosts.update { list -> list.map { if (it.id == post.id) post else it } }
         _discover.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) post else it }) }
+        _browse.update { st -> st.copy(posts = st.posts.map { if (it.id == post.id) post else it }) }
         _favorites.update { st ->
             val posts = if (post.isFavorited) {
                 st.posts.map { if (it.id == post.id) post else it }
@@ -593,6 +770,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
     fun setTranslateTags(enabled: Boolean) = update { it.copy(translateTags = enabled) }
+
+    /** 用户选择“跳过此版本”后不再为该 tag 弹更新提示。 */
+    fun skipUpdateVersion(tag: String) = update { it.copy(skippedUpdateTag = tag) }
     fun setRememberHistory(enabled: Boolean) = update { it.copy(rememberHistory = enabled) }
     fun setKeywordMemory(limit: Int) = update { it.copy(keywordMemory = limit.coerceIn(0, Config.MAX_KEYWORD_MEMORY)) }
     fun setSearchDefaults(maxPages: Int, limit: Int, minScore: Int) = update {
@@ -742,5 +922,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         const val ORDER_SCORE = "order:score"
         const val ORDER_NEWEST = "order:newest"
         const val ORDER_RANDOM = "order:random"
+        /** v1.5.0：替换“随机”板块的“视频”板块（e621 的 type:video）。 */
+        const val ORDER_VIDEO = "type:video"
+        const val BROWSE_SORT_SCORE = "score"
+        const val BROWSE_SORT_HOT = "hot"
     }
 }

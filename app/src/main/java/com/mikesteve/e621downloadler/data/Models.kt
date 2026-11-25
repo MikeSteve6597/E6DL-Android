@@ -65,6 +65,14 @@ data class Post(
     fun targetFilename(): String = "${id}_${md5.take(8)}.$ext"
 
     /**
+     * 卡片是否有可显示的缩略图/文件地址。
+     * v1.5.0：没有缩略图/文件地址（内容不可见、被限制、已删除等）的作品整张卡片不显示，
+     * 而不是显示「#编号 + 占位图标」。加载失败（有地址但网络失败）不算，仍保留卡片。
+     */
+    val hasVisibleCard: Boolean
+        get() = !previewUrl.isNullOrBlank() || !sampleUrl.isNullOrBlank() || !fileUrl.isNullOrBlank()
+
+    /**
      * 收藏状态变化后的副本：同时维护 `isFavorited` 与收藏数，
      * 避免详情页收藏后收藏数显示与状态不一致。
      */
@@ -239,6 +247,8 @@ data class Config(
     val blacklist: List<String> = emptyList(),
     val history: List<HistoryEntry> = emptyList(),
     val recentKeywords: List<String> = emptyList(),
+    /** 用户选择“跳过此版本”的更新 tag（如 android-v1.5.0）；空串表示不跳过。 */
+    val skippedUpdateTag: String = "",
 ) {
     val loggedIn: Boolean get() = username.isNotBlank() && apiKey.isNotBlank()
 

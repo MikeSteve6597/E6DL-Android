@@ -59,7 +59,7 @@ import com.mikesteve.e621downloadler.ui.components.PostCard
 private val ORDER_OPTIONS = listOf(
     AppViewModel.ORDER_SCORE to R.string.e6dl_order_hot,
     AppViewModel.ORDER_NEWEST to R.string.e6dl_order_newest,
-    AppViewModel.ORDER_RANDOM to R.string.e6dl_order_random,
+    AppViewModel.ORDER_VIDEO to R.string.e6dl_order_video,
 )
 
 /**
@@ -71,13 +71,14 @@ private val ORDER_OPTIONS = listOf(
 fun DiscoverPage(
     vm: AppViewModel,
     onOpenPost: (Post) -> Unit,
+    onSearch: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val cfg by vm.config.collectAsState()
     val state by vm.discover.collectAsState()
     val gridState = rememberLazyStaggeredGridState()
 
-    var keywordInput by remember(state.keyword) { mutableStateOf(state.keyword) }
+    var keywordInput by rememberSaveable { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var messageType by remember { mutableStateOf(InfoType.Info) }
     var showBlacklistConfirm by remember { mutableStateOf(false) }
@@ -133,9 +134,9 @@ fun DiscoverPage(
                 label = { Text(stringResource(R.string.e6dl_discover_keyword_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { vm.setDiscoverKeyword(keywordInput) }),
+                keyboardActions = KeyboardActions(onSearch = { onSearch(keywordInput) }),
                 trailingIcon = {
-                    IconButton(onClick = { vm.setDiscoverKeyword(keywordInput) }) {
+                    IconButton(onClick = { onSearch(keywordInput) }) {
                         Icon(
                             Icons.Filled.Search,
                             contentDescription = stringResource(R.string.e6dl_action_search),
