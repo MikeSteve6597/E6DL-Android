@@ -13,6 +13,7 @@ import com.mikesteve.e621downloadler.data.Quality
 import com.mikesteve.e621downloadler.download.DownloadEngine
 import com.mikesteve.e621downloadler.download.DownloadProgress
 import com.mikesteve.e621downloadler.net.ApiClient
+import com.mikesteve.e621downloadler.net.SearchKeyword
 import com.mikesteve.e621downloadler.net.TranslationRepository
 import com.mikesteve.e621downloadler.net.friendlyMessage
 import kotlinx.coroutines.CancellationException
@@ -87,6 +88,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _discover = MutableStateFlow(DiscoverState())
     val discover: StateFlow<DiscoverState> = _discover
     private var discoverJob: Job? = null
+
+    /**
+     * 发现页搜索栏里已选的关键词气泡（v1.5.2）。
+     *
+     * 放在 ViewModel 而不是页面内部：打开搜索结果页 / 切到其它 Tab 再回来时气泡不会丢，
+     * 旋转屏幕、折叠屏切换也天然保留（ViewModel 不重建）。
+     */
+    private val _searchKeywords = MutableStateFlow<List<SearchKeyword>>(emptyList())
+    val searchKeywords: StateFlow<List<SearchKeyword>> = _searchKeywords
+
+    fun setSearchKeywords(keywords: List<SearchKeyword>) {
+        _searchKeywords.value = keywords
+    }
 
     fun setDiscoverOrder(order: String) {
         if (_discover.value.order == order) return
@@ -305,22 +319,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 首页搜索：中文先经第三方翻译库转英文标签，再进入搜索结果页（D4/D8）。
-     * 翻译失败时按原文搜索，不阻塞用户。
+     * 首页搜索（v1.5.2）：接收搜索栏里的**中文气泡列表**，界面只用中文名字；
+     * 真正发请求时把每个气泡的英文 tag 拼进查询（未解析的中文先在线翻译成 tag）。
+     *
+     * 翻译失败时按原文兜底，不阻塞用户；任意一个可用的 tag 就会进入搜索结果页。
      */
-    fun searchFromHome(raw: String) {
-        val input = raw.trim()
-        if (input.isEmpty()) return
+    fun searchFromHome(keywords: List<SearchKeyword>) {
+        val usable = keywords.filter { it.tag.isNotBlank() }
+        if (usable.isEmpty()) return
         viewModelScope.launch {
             val cfg = config.value
-            val translated = try {
-                TranslationRepository.translateToEnglish(getApplication(), cfg, input)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                input
-            }
-            openBrowse(title = "搜索结果：$translated", query = translated)
+            val tags = usable.map { keyword ->
+                try {
+                    TranslationRepository.translateToEnglish(getApplication(), cfg, keyword.tag)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    keyword.tag
+                }
+            }.filter { it.isNotBlank() }
+            if (tags.isEmpty()) return@launch
+            // 标题用气泡里的中文名，后端查询用 tag（v1.5.2 需求）。
+            val title = "搜索结果：" + usable.joinToString(" ") { it.label }
+            openBrowse(title = title, query = tags.joinToString(","))
         }
     }
 

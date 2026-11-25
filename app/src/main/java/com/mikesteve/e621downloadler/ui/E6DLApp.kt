@@ -71,6 +71,7 @@ import com.mikesteve.e621downloadler.ui.pages.DiscoverPage
 import com.mikesteve.e621downloadler.ui.pages.FavoritesPage
 import com.mikesteve.e621downloadler.ui.pages.SearchPage
 import com.mikesteve.e621downloadler.ui.pages.SettingsPage
+import com.mikesteve.e621downloadler.ui.pages.TagWikiPage
 import com.mikesteve.e621downloadler.ui.theme.E6DLTheme
 import kotlinx.coroutines.launch
 
@@ -107,6 +108,8 @@ fun E6DLApp() {
     var destinationName by rememberSaveable { mutableStateOf(Destination.Discover.name) }
     val destination = Destination.valueOf(destinationName)
     var showLogin by rememberSaveable { mutableStateOf(false) }
+    // v1.5.2：Tag Wiki 是覆盖在列表栏之上的整页（发现页图标 / 设置页入口都能打开）。
+    var tagWikiOpen by rememberSaveable { mutableStateOf(false) }
     // 详情页点标签 → 切到「搜索下载」并把标签预填进关键词框。
     // 搜索页消费后必须置空，否则每次进搜索页都会被旧标签覆盖用户输入。
     var searchPrefill by rememberSaveable { mutableStateOf<String?>(null) }
@@ -127,8 +130,9 @@ fun E6DLApp() {
     val hasSeparatingVerticalHinge = adaptiveInfo.windowPosture.separatingVerticalHingeBounds.isNotEmpty()
 
     // 只有「发现 / 收藏」两个页面需要 List-Detail 双栏；搜索/黑名单/设置是整页表单，
-    // 直接用整页布局（见下方 Row 分支），避免右侧详情占位把内容挤到一半宽。
-    val listDetailEnabled = browse.active || destination == Destination.Discover || destination == Destination.Favorites
+    // Tag Wiki 也是整页，直接用整页布局（见下方 Row 分支），避免右侧详情占位把内容挤到一半宽。
+    val listDetailEnabled = !tagWikiOpen &&
+        (browse.active || destination == Destination.Discover || destination == Destination.Favorites)
 
     val directive = remember(adaptiveInfo, hasSeparatingVerticalHinge) {
         val base = if (hasSeparatingVerticalHinge) {
@@ -238,6 +242,7 @@ fun E6DLApp() {
         }
         val switchDestination: (Destination) -> Unit = { dest ->
             destinationName = dest.name
+            tagWikiOpen = false
             vm.closeBrowse()
             if (navigator.currentDestination?.pane == ListDetailPaneScaffoldRole.Detail) {
                 vm.closeDetail()
@@ -263,13 +268,16 @@ fun E6DLApp() {
                 }
             }
             if (useRail && !listDetailEnabled) {
-                // 搜索 / 黑名单 / 设置：整页表单布局，占满 Rail 之外的宽度
+                // 搜索 / 黑名单 / 设置 / Tag Wiki：整页表单布局，占满 Rail 之外的宽度
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     ListPane(
                         vm = vm,
                         destination = destination,
                         compact = false,
                         browseActive = browse.active,
+                        tagWikiOpen = tagWikiOpen,
+                        onOpenTagWiki = { tagWikiOpen = true },
+                        onCloseTagWiki = { tagWikiOpen = false },
                         onSelect = switchDestination,
                         onOpenPost = openDetail,
                         onOpenLogin = { showLogin = true },
@@ -293,6 +301,9 @@ fun E6DLApp() {
                                 destination = destination,
                                 compact = !useRail,
                                 browseActive = browse.active,
+                                tagWikiOpen = tagWikiOpen,
+                                onOpenTagWiki = { tagWikiOpen = true },
+                                onCloseTagWiki = { tagWikiOpen = false },
                                 onSelect = switchDestination,
                                 onOpenPost = openDetail,
                                 onOpenLogin = { showLogin = true },
@@ -387,6 +398,9 @@ private fun ListPane(
     destination: Destination,
     compact: Boolean,
     browseActive: Boolean,
+    tagWikiOpen: Boolean,
+    onOpenTagWiki: () -> Unit,
+    onCloseTagWiki: () -> Unit,
     onSelect: (Destination) -> Unit,
     onOpenPost: (Post) -> Unit,
     onOpenLogin: () -> Unit,
@@ -394,13 +408,16 @@ private fun ListPane(
     onSearchPrefillConsumed: () -> Unit,
 ) {
     val content: @Composable (Modifier) -> Unit = { innerModifier ->
-        if (browseActive) {
+        if (tagWikiOpen) {
+            TagWikiPage(onBack = onCloseTagWiki, modifier = innerModifier)
+        } else if (browseActive) {
             BrowsePage(vm = vm, onOpenPost = onOpenPost, modifier = innerModifier)
         } else when (destination) {
             Destination.Discover -> DiscoverPage(
                 vm,
                 onOpenPost = onOpenPost,
-                onSearch = { query -> vm.searchFromHome(query) },
+                onSearch = { keywords -> vm.searchFromHome(keywords) },
+                onOpenTagWiki = onOpenTagWiki,
                 modifier = innerModifier,
             )
             Destination.Search -> SearchPage(
@@ -416,7 +433,12 @@ private fun ListPane(
                 modifier = innerModifier,
             )
             Destination.Blacklist -> BlacklistPage(vm, modifier = innerModifier)
-            Destination.Settings -> SettingsPage(vm, onOpenLogin = onOpenLogin, modifier = innerModifier)
+            Destination.Settings -> SettingsPage(
+                vm,
+                onOpenLogin = onOpenLogin,
+                onOpenTagWiki = onOpenTagWiki,
+                modifier = innerModifier,
+            )
         }
     }
 

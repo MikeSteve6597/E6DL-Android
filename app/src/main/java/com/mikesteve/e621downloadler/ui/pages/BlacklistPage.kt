@@ -30,14 +30,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.mikesteve.e621downloadler.R
 import com.mikesteve.e621downloadler.net.TranslationRepository
+import com.mikesteve.e621downloadler.net.firstKeyword
 import com.mikesteve.e621downloadler.net.friendlyMessage
+import com.mikesteve.e621downloadler.net.keywordSuggestions
+import com.mikesteve.e621downloadler.net.tagLabel
 import com.mikesteve.e621downloadler.ui.AppViewModel
 import com.mikesteve.e621downloadler.ui.components.EmptyState
 import com.mikesteve.e621downloadler.ui.components.InfoBar
 import com.mikesteve.e621downloadler.ui.components.InfoType
+import com.mikesteve.e621downloadler.ui.components.KeywordSuggestionList
 import com.mikesteve.e621downloadler.ui.components.SectionCard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -52,6 +59,10 @@ import kotlinx.coroutines.launch
  *  - **列表过滤词**：输入内容实时按「包含匹配」过滤下方黑名单；如果当前输入刚被翻译过，
  *    也会用翻译出的英文 tag 参与匹配（例如输入「蓝眼睛」翻译成 `blue_eyes` 后能过滤到该标签）。
  *
+ * v1.5.1 起（用户需求）：
+ *  - 输入时在输入框下方实时展示**中英对照候选**（如「狗 - dog」），点击候选把英文标签写回输入框；
+ *  - 「搜索 / 添加」只处理**第一个关键词**（输入多个时不再一次性翻译/添加多个）。
+ *
  * 空态区分「黑名单为空」与「没有匹配的黑名单标签」，避免用户误以为黑名单被清空。
  * 网络锁/单机语义完全交给 TranslationRepository → NetworkGate，本页不绕过门禁。
  */
@@ -65,7 +76,25 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
     // 组合期取文案：submit 等普通回调里不能调用 @Composable 的 stringResource。
     val translateFailedMessage = stringResource(R.string.e6dl_blacklist_translate_failed)
 
-    var input by remember { mutableStateOf("") }
+    // v1.5.2：用 TextFieldValue 保存输入，点击候选后把光标放到文本末尾，
+    // 避免「文字被替换后光标停在单词中间」的问题（String 版 API 会保留旧 selection）。
+    var inputValue by remember { mutableStateOf(TextFieldValue("")) }
+    val input = inputValue.text
+
+    // 词典条目只读一次；候选匹配与中文标签展示都复用它。
+    val dictionaryEntries = remember(context) {
+        TranslationRepository.dictionaryEntries(context)
+    }
+
+    /** v1.5.1：输入时实时展示中英对照候选；点候选 / 提交后先收起，直到用户再次输入。 */
+    var suggestionsEnabled by remember { mutableStateOf(true) }
+    val suggestions = remember(input, suggestionsEnabled, dictionaryEntries) {
+        if (!suggestionsEnabled || input.isBlank()) {
+            emptyList()
+        } else {
+            keywordSuggestions(dictionaryEntries, input)
+        }
+    }
 
     /** 翻译 / 添加进行中：按钮禁用、输入框暂时只读，并显示进度小字。 */
     var busy by remember { mutableStateOf(false) }
@@ -93,41 +122,44 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
     }
 
     val clearInput: () -> Unit = {
-        input = ""
+        inputValue = TextFieldValue("")
         translatedSource = ""
         translatedTags = emptyList()
         errorMessage = null
     }
 
-    // 点击「搜索 / 添加」：含中文先翻译成英文 tag，纯英文直接按原逻辑拆分添加。
+    // 点击「搜索 / 添加」：v1.5.1 起只处理**第一个关键词**（与首页搜索规则一致）；
+    // 含中文先翻译成英文 tag，纯英文直接归一化后添加。
     val submit: () -> Unit = submit@{
         if (busy) return@submit
         val text = input.trim()
         if (text.isEmpty()) return@submit
+        val keyword = firstKeyword(text)
+        if (keyword.isEmpty()) return@submit
         errorMessage = null
         translatedSource = ""
         translatedTags = emptyList()
+        suggestionsEnabled = false
 
-        if (containsChinese(text)) {
+        if (containsChinese(keyword)) {
             busy = true
             scope.launch {
                 try {
-                    val translated = TranslationRepository.translateToEnglish(context, cfg, text)
+                    val translated = TranslationRepository.translateToEnglish(context, cfg, keyword)
                     // 翻译服务可能返回多词短语（"blue eyes"）或以逗号分隔的多个结果：
-                    // 逐项归一化成 e621 风格的单个英文 tag，再逐个加入黑名单。
-                    val tags = translated
+                    // 只取第一个可用的英文 tag（"只翻译第一个关键词"规则的一部分）。
+                    val tag = translated
                         .split(',', '，', ';', '；')
                         .map { normalizeEnglishTag(it) }
-                        .filter { it.isNotEmpty() }
+                        .firstOrNull { it.isNotEmpty() && !containsChinese(it) }
                     // 翻译服务偶发返回原文/空结果：此时宁可提示失败，也不把中文写进黑名单。
-                    val englishTags = tags.filterNot { containsChinese(it) }
-                    if (englishTags.isEmpty()) {
+                    if (tag == null) {
                         errorMessage = translateFailedMessage
                     } else {
-                        englishTags.forEach { vm.addBlacklist(it) }
+                        vm.addBlacklist(tag)
                         // 保留输入内容：既展示「将添加」提示，也继续用英文 tag 过滤列表。
                         translatedSource = text
-                        translatedTags = englishTags
+                        translatedTags = listOf(tag)
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -139,12 +171,10 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 }
             }
         } else {
-            // 英文/无中文：保持原有逻辑，按逗号/空格拆分后逐个添加（去重由 addBlacklist 负责）。
-            text.split(',', ' ')
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .forEach { vm.addBlacklist(it) }
-            // 不输入中文时无需保留翻译提示；输入框继续作为过滤词。
+            // 英文/无中文：只添加第一个关键词（去重由 addBlacklist 负责）。
+            normalizeEnglishTag(keyword)
+                .takeIf { it.isNotEmpty() }
+                ?.let { vm.addBlacklist(it) }
             translatedSource = ""
             translatedTags = emptyList()
         }
@@ -160,13 +190,14 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
-                    value = input,
-                    onValueChange = {
-                        input = it
-                        // 输入一变化，上一次的翻译结果与错误提示立即失效（避免误导）。
+                    value = inputValue,
+                    onValueChange = { value ->
+                        inputValue = value
+                        // 输入一变化，上一次的翻译结果、错误提示与候选列表立即失效（避免误导）。
                         translatedSource = ""
                         translatedTags = emptyList()
                         errorMessage = null
+                        suggestionsEnabled = true
                     },
                     label = { Text(stringResource(R.string.e6dl_blacklist_input_label)) },
                     placeholder = { Text(stringResource(R.string.e6dl_blacklist_input_placeholder)) },
@@ -192,6 +223,25 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 ) { Text(stringResource(R.string.e6dl_blacklist_submit)) }
             }
 
+            // v1.5.1：输入框下方实时展示中英对照候选（与发现页搜索栏一致），
+            // 点击候选把英文标签写回输入框，不直接添加。
+            if (suggestions.isNotEmpty()) {
+                KeywordSuggestionList(
+                    suggestions = suggestions,
+                    onPick = { suggestion ->
+                        // v1.5.2：替换文本时把光标放到末尾，避免停在单词中间。
+                        inputValue = TextFieldValue(
+                            suggestion.english,
+                            selection = TextRange(suggestion.english.length),
+                        )
+                        translatedSource = ""
+                        translatedTags = emptyList()
+                        errorMessage = null
+                        suggestionsEnabled = false
+                    },
+                )
+            }
+
             if (busy) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -213,7 +263,8 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                 Text(
                     text = stringResource(
                         R.string.e6dl_blacklist_will_add,
-                        translatedTags.joinToString("，"),
+                        // v1.5.2：提示里同样优先显示中文名，未知标签才显示英文。
+                        translatedTags.joinToString("，") { tagLabel(dictionaryEntries, it) },
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
@@ -264,12 +315,24 @@ fun BlacklistPage(vm: AppViewModel, modifier: Modifier = Modifier) {
                         )
                     }
                     filtered.forEach { tag ->
+                        // v1.5.2：关键词优先显示中文名（词典未收录时才只显示英文 tag）。
+                        val label = tagLabel(dictionaryEntries, tag)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(text = tag, style = MaterialTheme.typography.bodyLarge)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = label, style = MaterialTheme.typography.bodyLarge)
+                                if (label != tag) {
+                                    Text(
+                                        text = tag,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                            }
                             IconButton(onClick = { vm.removeBlacklist(tag) }) {
                                 Icon(
                                     Icons.Filled.Delete,

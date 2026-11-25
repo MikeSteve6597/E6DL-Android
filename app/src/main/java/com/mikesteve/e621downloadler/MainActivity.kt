@@ -12,8 +12,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        // 仅 debug 构建：允许通过 intent extra 打开演示数据（离线 UI 验证用）
+        // 仅 debug 构建：允许通过 intent extra 打开演示数据 / 预填中文关键词（离线 UI 验证用）
         DebugFlags.demo = BuildConfig.DEBUG && intent?.getBooleanExtra(EXTRA_DEMO, false) == true
+        DebugFlags.demoQuery =
+            if (BuildConfig.DEBUG) intent?.getStringExtra(EXTRA_QUERY).orEmpty() else ""
         setContent {
             E6DLTheme {
                 E6DLApp()
@@ -23,5 +25,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val EXTRA_DEMO = "e6dl_demo"
+        const val EXTRA_QUERY = "e6dl_query"
     }
 }

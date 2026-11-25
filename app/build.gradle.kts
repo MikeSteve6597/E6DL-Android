@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
     // AGP 9.0 起 Kotlin 支持已内置，不再需要 org.jetbrains.kotlin.android；
@@ -41,8 +41,8 @@ android {
         minSdk = 24
         // 不上架商店，targetSdk 用 36；compileSdk 只影响可调用的 API。
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.5.0"
+        versionCode = 12
+        versionName = "1.5.3"
 
         // 只发 ARMv8（用户要求：只开发 arm64-v8a）
         ndk {

@@ -1,4 +1,4 @@
-package com.mikesteve.e621downloadler.ui.pages
+﻿package com.mikesteve.e621downloadler.ui.pages
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -116,12 +116,12 @@ fun SearchPage(
     // 注意：这里只填输入框，不调用 start()，不自动开始下载。
     LaunchedEffect(initialTags) {
         val incoming = initialTags?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
-        tags = incoming.replace(' ', ',')
+        tags = incoming
         onPrefillConsumed()
     }
 
     fun start() {
-        val tagList = tags.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val tagList = splitKeywords(tags)
         if (tagList.isEmpty()) {
             message = keywordRequiredMessage
             messageType = InfoType.Warning
@@ -341,14 +341,14 @@ fun SearchPage(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                tags = h.tags.joinToString(", ")
+                                tags = h.tags.joinToString(" ")
                                 tempBlacklist = h.blacklist.joinToString(", ")
                             },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = h.tags.joinToString(", "),
+                            text = h.tags.joinToString(" "),
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                         )

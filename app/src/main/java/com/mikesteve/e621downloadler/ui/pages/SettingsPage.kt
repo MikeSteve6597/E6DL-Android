@@ -53,6 +53,7 @@ import com.mikesteve.e621downloadler.ui.components.SectionCard
 fun SettingsPage(
     vm: AppViewModel,
     onOpenLogin: () -> Unit,
+    onOpenTagWiki: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val cfg by vm.config.collectAsState()
@@ -228,6 +229,18 @@ fun SettingsPage(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        // v1.5.2：Tag Wiki 入口（发现页搜索栏右侧的书本图标是另一个入口）。
+        SectionCard(title = stringResource(R.string.e6dl_keyword_wiki)) {
+            Text(
+                text = stringResource(R.string.e6dl_keyword_wiki_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onOpenTagWiki) {
+                Text(stringResource(R.string.e6dl_keyword_wiki_open))
+            }
         }
 
         SectionCard(title = stringResource(R.string.e6dl_settings_section_keyword_memory)) {

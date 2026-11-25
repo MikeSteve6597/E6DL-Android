@@ -137,6 +137,15 @@ object TranslationRepository {
     fun dictionarySize(context: Context): Int = dictionary(context.applicationContext).size
 
     /**
+     * 内置词典全量条目（英文标签 → 中文释义），供「实时中英对照推荐」等只读场景使用（v1.5.1）。
+     *
+     * 首次调用读取 `res/raw/local_tag_translations.tsv` 并进程内缓存，之后不再读盘；
+     * 返回副本，调用方不能改到缓存里的 Map。
+     */
+    fun dictionaryEntries(context: Context): List<Pair<String, String>> =
+        dictionary(context.applicationContext).map { (english, chinese) -> english to chinese }
+
+    /**
      * 读取并解析内置词典：两列 TSV（英文 tag <TAB> 中文），忽略空行与 `#` 注释。
      * 解析失败（资源缺失等）返回空表，调用方回退原文，不抛异常。
      */

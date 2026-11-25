@@ -13,13 +13,11 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,7 +25,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,16 +41,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.mikesteve.e621downloadler.R
 import com.mikesteve.e621downloadler.data.Config
 import com.mikesteve.e621downloadler.data.Post
+import com.mikesteve.e621downloadler.net.SearchKeyword
+import com.mikesteve.e621downloadler.net.TranslationRepository
+import com.mikesteve.e621downloadler.net.keywordSuggestions
+import com.mikesteve.e621downloadler.net.resolveKeyword
+import com.mikesteve.e621downloadler.net.splitKeywords
 import com.mikesteve.e621downloadler.ui.AppViewModel
 import com.mikesteve.e621downloadler.ui.DebugFlags
 import com.mikesteve.e621downloadler.ui.components.EmptyState
 import com.mikesteve.e621downloadler.ui.components.InfoBar
 import com.mikesteve.e621downloadler.ui.components.InfoType
+import com.mikesteve.e621downloadler.ui.components.KeywordSearchBar
+import com.mikesteve.e621downloadler.ui.components.KeywordSuggestionList
 import com.mikesteve.e621downloadler.ui.components.PostCard
 
 private val ORDER_OPTIONS = listOf(
@@ -71,19 +74,67 @@ private val ORDER_OPTIONS = listOf(
 fun DiscoverPage(
     vm: AppViewModel,
     onOpenPost: (Post) -> Unit,
-    onSearch: (String) -> Unit,
+    onSearch: (List<SearchKeyword>) -> Unit,
+    onOpenTagWiki: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val cfg by vm.config.collectAsState()
     val state by vm.discover.collectAsState()
     val gridState = rememberLazyStaggeredGridState()
 
-    var keywordInput by rememberSaveable { mutableStateOf("") }
+    // v1.5.2：已选关键词以「中文气泡」形式保存在搜索栏里；输入框只负责输入新关键词/出推荐。
+    // 气泡存在 ViewModel 里（打开结果页/切换 Tab 再回来不会丢）。
+    val keywords by vm.searchKeywords.collectAsState()
+    var keywordInput by rememberSaveable { mutableStateOf(DebugFlags.demoQuery) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageType by remember { mutableStateOf(InfoType.Info) }
     var showBlacklistConfirm by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    // 词典只在页面首次组合时读一次（TranslationRepository 内部还有进程级缓存），
+    // 匹配/解析逻辑都是纯函数，见 net/KeywordSuggestions。
+    val dictionaryEntries = remember(context) {
+        TranslationRepository.dictionaryEntries(context)
+    }
+    val suggestions = remember(keywordInput, dictionaryEntries) {
+        if (keywordInput.isBlank()) {
+            emptyList()
+        } else {
+            keywordSuggestions(dictionaryEntries, keywordInput)
+        }
+    }
+    // 把输入框里的文本（可能含空格分隔的多个词）解析成中文气泡。
+    val addKeywordsFromText: (String) -> Unit = { text ->
+        val resolved = splitKeywords(text)
+            .map { resolveKeyword(dictionaryEntries, it) }
+            .filter { it.tag.isNotBlank() }
+        if (resolved.isNotEmpty()) {
+            vm.setSearchKeywords(keywords + resolved)
+        }
+    }
+    // v1.5.2：空格作为关键词分隔符——输入空格时把前面的内容收进气泡，输入框清空，
+    // 这样紧接着输入第二个关键词时推荐仍能继续（修复 v1.5.1 点击推荐后无法继续翻译）。
+    val onInputChange: (String) -> Unit = { value ->
+        if (value.endsWith(' ') || value.endsWith('\n')) {
+            addKeywordsFromText(value)
+            keywordInput = ""
+        } else {
+            keywordInput = value
+        }
+    }
+    // 提交搜索：把输入框里剩下的文本也拼成气泡，然后把**全部气泡的英文 tag** 交给后端；
+    // 界面上始终只展示气泡里的中文名（v1.5.2 需求）。
+    val submitSearch: () -> Unit = {
+        val pending = splitKeywords(keywordInput)
+        val all = (keywords + pending.map { resolveKeyword(dictionaryEntries, it) })
+            .filter { it.tag.isNotBlank() }
+            .distinctBy { it.tag }
+        vm.setSearchKeywords(all)
+        keywordInput = ""
+        if (all.isNotEmpty()) {
+            onSearch(all)
+        }
+    }
     // 在组合期取文本：onClick / 本地函数等非 @Composable 作用域里不能直接调 stringResource。
     val selectBlacklistFirstMessage = stringResource(R.string.e6dl_select_blacklist_first)
 
@@ -128,23 +179,32 @@ fun DiscoverPage(
 
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-            OutlinedTextField(
-                value = keywordInput,
-                onValueChange = { keywordInput = it },
-                label = { Text(stringResource(R.string.e6dl_discover_keyword_hint)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { onSearch(keywordInput) }),
-                trailingIcon = {
-                    IconButton(onClick = { onSearch(keywordInput) }) {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = stringResource(R.string.e6dl_action_search),
-                        )
-                    }
+            // v1.5.2：Pixiv 式搜索栏——已选关键词以中文气泡显示在栏内，每个气泡右侧 x 可删除。
+            KeywordSearchBar(
+                keywords = keywords,
+                // v1.5.2.1：按关键词对象删除（而不是下标），并让整颗气泡成为删除热区。
+                onRemoveKeyword = { keyword ->
+                    vm.setSearchKeywords(keywords.filterNot { it.tag == keyword.tag })
                 },
-                modifier = Modifier.fillMaxWidth(),
+                input = keywordInput,
+                onInputChange = onInputChange,
+                onSubmit = submitSearch,
+                placeholder = stringResource(R.string.e6dl_keyword_input_placeholder),
             )
+
+            // 搜索栏下方只在这里显示「英文原 tag」（v1.5.2 需求）；点击后变成中文气泡。
+            if (suggestions.isNotEmpty()) {
+                KeywordSuggestionList(
+                    suggestions = suggestions,
+                    onPick = { suggestion ->
+                        vm.setSearchKeywords(
+                            keywords + SearchKeyword(suggestion.english, suggestion.chinese),
+                        )
+                        keywordInput = ""
+                    },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
 
             Row(
                 modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
@@ -159,6 +219,13 @@ fun DiscoverPage(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                // v1.5.2：Tag Wiki 入口（展示内置词典收录的全部 tag 中英文）。
+                IconButton(onClick = onOpenTagWiki) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.MenuBook,
+                        contentDescription = stringResource(R.string.e6dl_keyword_wiki),
+                    )
+                }
                 IconButton(
                     onClick = {
                         if (state.selectionMode) {

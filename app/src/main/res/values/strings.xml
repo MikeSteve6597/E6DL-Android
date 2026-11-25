@@ -49,6 +49,16 @@
     <string name="e6dl_order_random">随机</string>
     <string name="e6dl_order_video">视频</string>
     <string name="e6dl_discover_keyword_hint">搜索</string>
+    <string name="e6dl_keyword_suggestion_pair">%1$s - %2$s</string>
+    <!-- v1.5.2：Pixiv 式中文气泡搜索栏 + Tag Wiki -->
+    <string name="e6dl_keyword_input_placeholder">输入关键词，空格分隔</string>
+    <string name="e6dl_keyword_remove">删除关键词 %1$s</string>
+    <string name="e6dl_keyword_wiki">标签 Wiki</string>
+    <string name="e6dl_keyword_wiki_open">打开标签 Wiki</string>
+    <string name="e6dl_keyword_wiki_desc">浏览内置词典收录的全部标签中英文对照</string>
+    <string name="e6dl_keyword_wiki_search">搜索中 / 英文标签</string>
+    <string name="e6dl_keyword_wiki_count">共 %1$d 条</string>
+    <string name="e6dl_keyword_wiki_empty">没有匹配的标签</string>
     <string name="e6dl_discover_demo_hint">演示数据：debug 构建启动参数 e6dl_demo=true 时注入，用于离线验证布局。</string>
     <string name="e6dl_discover_guest_blacklist_hint">游客模式下发现页不使用黑名单（与桌面版一致）</string>
     <string name="e6dl_discover_empty_title">暂无推荐内容</string>
@@ -104,7 +114,7 @@
 
     <!-- ======================= 搜索下载页 ======================= -->
     <string name="e6dl_search_section_conditions">搜索条件</string>
-    <string name="e6dl_search_keyword_hint">关键词（多个用英文逗号分隔）</string>
+    <string name="e6dl_search_keyword_hint">关键词（多个用空格分隔）</string>
     <string name="e6dl_search_temp_blacklist_hint">本次黑名单（留空则用黑名单页设置）</string>
     <string name="e6dl_search_max_pages">页数</string>
     <string name="e6dl_search_limit">每页数量</string>
@@ -281,13 +291,13 @@
 
     <!-- ======================= 黑名单搜索/添加（v1.5.0） ======================= -->
     <string name="e6dl_blacklist_search_add">搜索 / 添加关键词</string>
-    <string name="e6dl_blacklist_input_label">关键词 / 标签（支持中文）</string>
-    <string name="e6dl_blacklist_input_placeholder">例如：gore、蓝眼睛</string>
+    <string name="e6dl_blacklist_input_label">关键词 / 标签</string>
+    <string name="e6dl_blacklist_input_placeholder">例如：gore</string>
     <string name="e6dl_blacklist_submit">搜索 / 添加</string>
     <string name="e6dl_blacklist_translating">正在翻译成英文标签…</string>
     <string name="e6dl_blacklist_translate_failed">翻译失败：没有得到可用的英文标签，请换一个关键词再试。</string>
     <string name="e6dl_blacklist_will_add">将添加：%1$s</string>
-    <string name="e6dl_blacklist_filter_note">输入内容同时用于过滤下方列表：输入英文直接添加；输入中文会先翻译成英文标签再添加。</string>
+    <string name="e6dl_blacklist_filter_note">输入内容同时用于过滤下方列表；点「搜索 / 添加」把关键词加入黑名单。</string>
     <string name="e6dl_blacklist_filter_empty_title">没有匹配的黑名单标签</string>
     <string name="e6dl_blacklist_filter_empty_desc">当前关键词「%1$s」没有匹配项；清空输入可查看全部 %2$d 个标签。</string>
     <string name="e6dl_blacklist_match_count">匹配 %1$d / %2$d 项</string>
